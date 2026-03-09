@@ -31,10 +31,17 @@ export const GitBranch = Schema.Struct({
 });
 export type GitBranch = typeof GitBranch.Type;
 
-const GitWorktree = Schema.Struct({
+export const GitWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
 });
+export type GitWorktree = typeof GitWorktree.Type;
+
+export const GitListedWorktree = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
+});
+export type GitListedWorktree = typeof GitListedWorktree.Type;
 
 // RPC Inputs
 
@@ -60,6 +67,11 @@ export const GitListBranchesInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
 export type GitListBranchesInput = typeof GitListBranchesInput.Type;
+
+export const GitListWorktreesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitListWorktreesInput = typeof GitListWorktreesInput.Type;
 
 export const GitCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -130,6 +142,12 @@ export const GitListBranchesResult = Schema.Struct({
   isRepo: Schema.Boolean,
 });
 export type GitListBranchesResult = typeof GitListBranchesResult.Type;
+
+export const GitListWorktreesResult = Schema.Struct({
+  worktrees: Schema.Array(GitListedWorktree),
+  isRepo: Schema.Boolean,
+});
+export type GitListWorktreesResult = typeof GitListWorktreesResult.Type;
 
 export const GitCreateWorktreeResult = Schema.Struct({
   worktree: GitWorktree,

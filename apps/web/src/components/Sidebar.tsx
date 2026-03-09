@@ -62,6 +62,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { SidebarProjectWorktreePicker } from "./SidebarProjectWorktreePicker";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -1201,6 +1202,17 @@ export default function Sidebar() {
                             : "New thread"}
                         </TooltipPopup>
                       </Tooltip>
+                      <SidebarProjectWorktreePicker
+                        projectName={project.name}
+                        projectCwd={project.cwd}
+                        onSelectWorktree={({ branch, worktreePath }) => {
+                          void handleNewThread(project.id, {
+                            branch,
+                            worktreePath,
+                            envMode: "worktree",
+                          });
+                        }}
+                      />
                     </div>
 
                     <CollapsibleContent>

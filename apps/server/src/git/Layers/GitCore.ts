@@ -92,6 +92,48 @@ function parseBranchLine(line: string): { name: string; current: boolean } | nul
   };
 }
 
+interface ParsedWorktreeEntry {
+  path: string;
+  branch: string | null;
+}
+
+function parseWorktreeList(stdout: string): ReadonlyArray<ParsedWorktreeEntry> {
+  const entries: ParsedWorktreeEntry[] = [];
+  let currentPath: string | null = null;
+  let currentBranch: string | null = null;
+
+  const flush = () => {
+    if (!currentPath) {
+      return;
+    }
+    entries.push({
+      path: currentPath,
+      branch: currentBranch,
+    });
+    currentPath = null;
+    currentBranch = null;
+  };
+
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      flush();
+      currentPath = line.slice("worktree ".length);
+      currentBranch = null;
+      continue;
+    }
+    if (line.startsWith("branch refs/heads/")) {
+      currentBranch = line.slice("branch refs/heads/".length);
+      continue;
+    }
+    if (line.trim().length === 0) {
+      flush();
+    }
+  }
+
+  flush();
+  return entries;
+}
+
 function parseRemoteNames(stdout: string): ReadonlyArray<string> {
   return stdout
     .split("\n")
@@ -257,6 +299,46 @@ const makeGitCore = Effect.gen(function* () {
         timeoutMs: 5_000,
       },
     ).pipe(Effect.map((result) => result.code === 0));
+
+  const readExistingWorktrees = (
+    cwd: string,
+  ): Effect.Effect<ReadonlyArray<ParsedWorktreeEntry>, GitCommandError> =>
+    executeGit("GitCore.readExistingWorktrees", cwd, ["worktree", "list", "--porcelain"], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.flatMap((result) => {
+        if (result.code !== 0) {
+          const stderr = result.stderr.trim();
+          if (stderr.toLowerCase().includes("not a git repository")) {
+            return Effect.succeed([]);
+          }
+          return Effect.fail(
+            createGitCommandError(
+              "GitCore.readExistingWorktrees",
+              cwd,
+              ["worktree", "list", "--porcelain"],
+              stderr || "git worktree list failed",
+            ),
+          );
+        }
+        return Effect.succeed(parseWorktreeList(result.stdout));
+      }),
+      Effect.flatMap((entries) =>
+        Effect.forEach(
+          entries,
+          (entry) =>
+            fileSystem.stat(entry.path).pipe(
+              Effect.map(() => entry),
+              Effect.catch(() => Effect.succeed(null)),
+            ),
+          { concurrency: "unbounded" },
+        ),
+      ),
+      Effect.map((entries) =>
+        entries.filter((entry): entry is ParsedWorktreeEntry => entry !== null),
+      ),
+    );
 
   const resolveAvailableBranchName = (
     cwd: string,
@@ -886,7 +968,7 @@ const makeGitCore = Effect.gen(function* () {
         ),
       );
 
-      const [defaultRef, worktreeList, remoteBranchResult, remoteNamesResult, branchLastCommit] =
+      const [defaultRef, worktreeEntries, remoteBranchResult, remoteNamesResult, branchLastCommit] =
         yield* Effect.all(
           [
             executeGit(
@@ -898,15 +980,7 @@ const makeGitCore = Effect.gen(function* () {
                 allowNonZeroExit: true,
               },
             ),
-            executeGit(
-              "GitCore.listBranches.worktreeList",
-              input.cwd,
-              ["worktree", "list", "--porcelain"],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ),
+            readExistingWorktrees(input.cwd),
             remoteBranchResultEffect,
             remoteNamesResultEffect,
             branchRecencyPromise,
@@ -933,21 +1007,9 @@ const makeGitCore = Effect.gen(function* () {
           : null;
 
       const worktreeMap = new Map<string, string>();
-      if (worktreeList.code === 0) {
-        let currentPath: string | null = null;
-        for (const line of worktreeList.stdout.split("\n")) {
-          if (line.startsWith("worktree ")) {
-            const candidatePath = line.slice("worktree ".length);
-            const exists = yield* fileSystem.stat(candidatePath).pipe(
-              Effect.map(() => true),
-              Effect.catch(() => Effect.succeed(false)),
-            );
-            currentPath = exists ? candidatePath : null;
-          } else if (line.startsWith("branch refs/heads/") && currentPath) {
-            worktreeMap.set(line.slice("branch refs/heads/".length), currentPath);
-          } else if (line === "") {
-            currentPath = null;
-          }
+      for (const worktree of worktreeEntries) {
+        if (worktree.branch) {
+          worktreeMap.set(worktree.branch, worktree.path);
         }
       }
 
@@ -1011,6 +1073,38 @@ const makeGitCore = Effect.gen(function* () {
       const branches = [...localBranches, ...remoteBranches];
 
       return { branches, isRepo: true };
+    });
+
+  const listWorktrees: GitCoreShape["listWorktrees"] = (input) =>
+    Effect.gen(function* () {
+      const branchResult = yield* executeGit(
+        "GitCore.listWorktrees.branchNoColor",
+        input.cwd,
+        ["branch", "--no-color"],
+        {
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        },
+      );
+
+      if (branchResult.code !== 0) {
+        const stderr = branchResult.stderr.trim();
+        if (stderr.toLowerCase().includes("not a git repository")) {
+          return { worktrees: [], isRepo: false };
+        }
+        return yield* createGitCommandError(
+          "GitCore.listWorktrees",
+          input.cwd,
+          ["branch", "--no-color"],
+          stderr || "git branch failed",
+        );
+      }
+
+      const worktrees = yield* readExistingWorktrees(input.cwd);
+      return {
+        worktrees: worktrees.toSorted((a, b) => a.path.localeCompare(b.path)),
+        isRepo: true,
+      };
     });
 
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>
@@ -1196,6 +1290,7 @@ const makeGitCore = Effect.gen(function* () {
     readRangeContext,
     readConfigValue,
     listBranches,
+    listWorktrees,
     createWorktree,
     removeWorktree,
     renameBranch,

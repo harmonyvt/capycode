@@ -3146,16 +3146,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [scheduleComposerFocus, setComposerDraftCodexFastMode, threadId],
   );
-  const onEnvModeChange = useCallback(
-    (mode: DraftThreadEnvMode) => {
-      if (isLocalDraftThread) {
-        setDraftThreadContext(threadId, { envMode: mode });
-      }
-      scheduleComposerFocus();
-    },
-    [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
-  );
-
   const applyPromptReplacement = useCallback(
     (
       rangeStart: number,
@@ -3918,7 +3908,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {isGitRepo && (
         <BranchToolbar
           threadId={activeThread.id}
-          onEnvModeChange={onEnvModeChange}
           envLocked={envLocked}
           onComposerFocusRequest={scheduleComposerFocus}
         />

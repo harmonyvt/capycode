@@ -394,7 +394,7 @@ describe("WebSocket Server", () => {
       providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
-      gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
+      gitCore?: Pick<GitCoreShape, "listBranches" | "listWorktrees" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
@@ -1581,6 +1581,12 @@ describe("WebSocket Server", () => {
         isRepo: false,
       }),
     );
+    const listWorktrees = vi.fn(() =>
+      Effect.succeed({
+        worktrees: [],
+        isRepo: false,
+      }),
+    );
     const initRepo = vi.fn(() => Effect.void);
     const pullCurrentBranch = vi.fn(() =>
       Effect.fail(
@@ -1597,6 +1603,7 @@ describe("WebSocket Server", () => {
       cwd: "/test",
       gitCore: {
         listBranches,
+        listWorktrees,
         initRepo,
         pullCurrentBranch,
       },
@@ -1612,6 +1619,13 @@ describe("WebSocket Server", () => {
     expect(listResponse.error).toBeUndefined();
     expect(listResponse.result).toEqual({ branches: [], isRepo: false });
     expect(listBranches).toHaveBeenCalledWith({ cwd: "/repo/path" });
+
+    const listWorktreesResponse = await sendRequest(ws, WS_METHODS.gitListWorktrees, {
+      cwd: "/repo/path",
+    });
+    expect(listWorktreesResponse.error).toBeUndefined();
+    expect(listWorktreesResponse.result).toEqual({ worktrees: [], isRepo: false });
+    expect(listWorktrees).toHaveBeenCalledWith({ cwd: "/repo/path" });
 
     const initResponse = await sendRequest(ws, WS_METHODS.gitInit, { cwd: "/repo/path" });
     expect(initResponse.error).toBeUndefined();

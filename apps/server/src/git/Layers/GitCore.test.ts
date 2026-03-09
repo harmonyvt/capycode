@@ -104,6 +104,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
       readRangeContext: (cwd, baseBranch) => core.readRangeContext(cwd, baseBranch),
       readConfigValue: (cwd, key) => core.readConfigValue(cwd, key),
       listBranches: (input) => core.listBranches(input),
+      listWorktrees: (input) => core.listWorktrees(input),
       createWorktree: (input) => core.createWorktree(input),
       removeWorktree: (input) => core.removeWorktree(input),
       renameBranch: (input) => core.renameBranch(input),
@@ -146,6 +147,13 @@ function createGitWorktree(input: Parameters<GitCoreShape["createWorktree"]>[0])
   return Effect.gen(function* () {
     const core = yield* GitCore;
     return yield* core.createWorktree(input);
+  });
+}
+
+function listGitWorktrees(input: Parameters<GitCoreShape["listWorktrees"]>[0]) {
+  return Effect.gen(function* () {
+    const core = yield* GitCore;
+    return yield* core.listWorktrees(input);
   });
 }
 
@@ -1056,6 +1064,36 @@ it.layer(TestLayer)("git integration", (it) => {
         const mainBranches = yield* listGitBranches({ cwd: tmp });
         const mainCurrent = mainBranches.branches.find((b) => b.current);
         expect(mainCurrent!.name).toBe(mainBranch);
+
+        yield* removeGitWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
+    it.effect("lists existing worktrees with their branch metadata", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+
+        const wtPath = path.join(tmp, "wt-existing-dir");
+        const mainBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+
+        yield* createGitWorktree({
+          cwd: tmp,
+          branch: mainBranch,
+          newBranch: "wt-existing",
+          path: wtPath,
+        });
+
+        const result = yield* listGitWorktrees({ cwd: tmp });
+        expect(result.isRepo).toBe(true);
+        expect(result.worktrees).toEqual(
+          expect.arrayContaining([
+            { path: tmp, branch: mainBranch },
+            { path: wtPath, branch: "wt-existing" },
+          ]),
+        );
 
         yield* removeGitWorktree({ cwd: tmp, path: wtPath });
       }),

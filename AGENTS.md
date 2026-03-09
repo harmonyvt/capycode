@@ -5,6 +5,13 @@
 - Both `bun lint` and `bun typecheck` must pass before considering tasks completed.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
+## Git Remote Safety
+
+- Default all git push, PR, branch publishing, and remote submission workflows to the user's fork remote, not the original `pingdotgg/t3code` repository.
+- Treat the original upstream repository as read-only unless the user gives explicit approval in the current conversation to push, open a PR, or otherwise submit changes there.
+- If the local clone has both `origin` and `upstream`, prefer `origin` for the user's fork and treat `upstream` as the protected original unless the user explicitly says otherwise.
+- Before any push or PR step, verify the target remote and stop if the command would publish to the original upstream without explicit approval.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using code agents like Codex and Claude Code (coming soon).

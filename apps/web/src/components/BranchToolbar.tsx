@@ -5,24 +5,23 @@ import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
+import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import {
   EnvMode,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
-import { Button } from "./ui/button";
+import { BranchToolbarWorktreeSelector } from "./BranchToolbarWorktreeSelector";
 
 interface BranchToolbarProps {
   threadId: ThreadId;
-  onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
   onComposerFocusRequest?: () => void;
 }
 
 export default function BranchToolbar({
   threadId,
-  onEnvModeChange,
   envLocked,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
@@ -46,10 +45,11 @@ export default function BranchToolbar({
     draftThreadEnvMode: draftThread?.envMode,
   });
 
-  const setThreadBranch = useCallback(
-    (branch: string | null, worktreePath: string | null) => {
+  const updateThreadContext = useCallback(
+    (input: { branch: string | null; worktreePath: string | null; envMode?: EnvMode }) => {
       if (!activeThreadId) return;
       const api = readNativeApi();
+      const { branch, worktreePath } = input;
       // If the effective cwd is about to change, stop the running session so the
       // next message creates a new one with the correct cwd.
       if (serverThread?.session && worktreePath !== activeWorktreePath && api) {
@@ -75,11 +75,13 @@ export default function BranchToolbar({
         setThreadBranchAction(activeThreadId, branch, worktreePath);
         return;
       }
-      const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
-        nextWorktreePath: worktreePath,
-        currentWorktreePath: activeWorktreePath,
-        effectiveEnvMode,
-      });
+      const nextDraftEnvMode =
+        input.envMode ??
+        resolveDraftEnvModeAfterBranchChange({
+          nextWorktreePath: worktreePath,
+          currentWorktreePath: activeWorktreePath,
+          effectiveEnvMode,
+        });
       setDraftThreadContext(threadId, {
         branch,
         worktreePath,
@@ -98,25 +100,51 @@ export default function BranchToolbar({
     ],
   );
 
+  const setThreadBranch = useCallback(
+    (branch: string | null, worktreePath: string | null) => {
+      updateThreadContext({ branch, worktreePath });
+    },
+    [updateThreadContext],
+  );
+
   if (!activeThreadId || !activeProject) return null;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pb-3 pt-1">
       <div className="flex items-center gap-2">
-        {envLocked || activeWorktreePath ? (
+        {envLocked ? (
           <span className="border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-            {activeWorktreePath ? "Worktree" : "Local"}
+            {activeWorktreePath ? formatWorktreePathForDisplay(activeWorktreePath) : "Local project"}
           </span>
         ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            className="text-muted-foreground/70 hover:text-foreground/80"
-            size="xs"
-            onClick={() => onEnvModeChange(effectiveEnvMode === "local" ? "worktree" : "local")}
-          >
-            {effectiveEnvMode === "worktree" ? "New worktree" : "Local"}
-          </Button>
+          <BranchToolbarWorktreeSelector
+            activeProjectCwd={activeProject.cwd}
+            activeThreadBranch={activeThreadBranch}
+            activeWorktreePath={activeWorktreePath}
+            effectiveEnvMode={effectiveEnvMode}
+            onSelectLocal={(branch) =>
+              updateThreadContext({
+                branch,
+                worktreePath: null,
+                envMode: "local",
+              })
+            }
+            onSelectNewWorktree={(branch) =>
+              updateThreadContext({
+                branch,
+                worktreePath: null,
+                envMode: "worktree",
+              })
+            }
+            onSelectExistingWorktree={(branch, worktreePath) =>
+              updateThreadContext({
+                branch,
+                worktreePath,
+                envMode: "worktree",
+              })
+            }
+            {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+          />
         )}
       </div>
 
