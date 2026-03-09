@@ -647,6 +647,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  // Tracks the turnId for which the plan sidebar was last auto-opened.
+  // Prevents re-opening after the user explicitly closes it during the same turn.
+  const planSidebarAutoOpenedForTurnRef = useRef<string | null>(null);
+  // Tracks whether the user explicitly dismissed the sidebar for the active turn.
+  const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
@@ -1933,14 +1938,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     setExpandedWorkGroups({});
     setPlanSidebarOpen(false);
+    planSidebarAutoOpenedForTurnRef.current = null;
+    planSidebarDismissedForTurnRef.current = null;
   }, [activeThread?.id]);
 
-  // Auto-open plan sidebar when a plan becomes available
+  // Auto-open plan sidebar when a plan first appears for a new turn.
+  // Does not re-open if the user dismissed it during the same turn.
   useEffect(() => {
-    if (activePlan && activePlan.steps.length > 0) {
-      setPlanSidebarOpen(true);
-    }
-  }, [activePlan]);
+    if (!activePlan || activePlan.steps.length === 0) return;
+    const turnKey = activePlan.turnId ?? "unknown";
+    // Already auto-opened for this turn — don't force re-open.
+    if (planSidebarAutoOpenedForTurnRef.current === turnKey) return;
+    // User explicitly closed sidebar for this turn — respect that.
+    if (planSidebarDismissedForTurnRef.current === turnKey) return;
+    planSidebarAutoOpenedForTurnRef.current = turnKey;
+    setPlanSidebarOpen(true);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on stable sub-properties, not full activePlan reference which changes on every streaming tick
+  }, [activePlan?.turnId, activePlan?.steps.length]);
 
   useEffect(() => {
     if (!composerMenuOpen) {
@@ -2676,6 +2690,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
+      // Optimistically open the plan sidebar as soon as a plan-mode turn starts,
+      // so the user sees it immediately instead of waiting for server plan data.
+      if (interactionMode === "plan") {
+        planSidebarDismissedForTurnRef.current = null;
+        setPlanSidebarOpen(true);
+      }
       if (isFirstMessage) {
         clearDraftThread(threadIdForSend);
       }
@@ -3754,7 +3774,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   </Button>
 
                   {/* Plan sidebar toggle */}
-                  {(activePlan || activeProposedPlan) ? (
+                  {(activePlan || activeProposedPlan || planSidebarOpen) ? (
                     <>
                       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
                       <Button
@@ -3767,7 +3787,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         )}
                         size="sm"
                         type="button"
-                        onClick={() => setPlanSidebarOpen((open) => !open)}
+                        onClick={() => {
+                          setPlanSidebarOpen((open) => {
+                            if (open) {
+                              // Closing: track dismissal for current turn
+                              const turnKey = activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
+                              if (turnKey) {
+                                planSidebarDismissedForTurnRef.current = turnKey;
+                              }
+                            } else {
+                              // Re-opening: clear dismissal tracking
+                              planSidebarDismissedForTurnRef.current = null;
+                            }
+                            return !open;
+                          });
+                        }}
                         title={planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
                       >
                         <ListTodoIcon />
@@ -3944,13 +3978,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </div>{/* end chat column */}
 
         {/* Plan sidebar */}
-        {planSidebarOpen && (activePlan || activeProposedPlan) ? (
+        {planSidebarOpen ? (
           <PlanSidebar
             activePlan={activePlan}
             activeProposedPlan={activeProposedPlan}
             markdownCwd={gitCwd ?? undefined}
             workspaceRoot={activeProject?.cwd ?? undefined}
-            onClose={() => setPlanSidebarOpen(false)}
+            onClose={() => {
+              setPlanSidebarOpen(false);
+              // Track that the user explicitly dismissed for this turn so auto-open won't fight them.
+              const turnKey = activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
+              if (turnKey) {
+                planSidebarDismissedForTurnRef.current = turnKey;
+              }
+            }}
           />
         ) : null}
       </div>{/* end horizontal flex container */}
@@ -4382,11 +4423,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     const handler = (event: globalThis.KeyboardEvent) => {
       // Only handle bare number keys (no modifiers)
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      // Allow from within the Lexical editor (contenteditable divs)
+      // Don't intercept when the user is typing in any editable element
       const target = event.target;
       if (
         target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
       ) {
         return;
       }
