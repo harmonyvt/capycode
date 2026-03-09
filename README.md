@@ -10,20 +10,23 @@ I occasionally pull in upstream updates from [pingdotgg/t3code](https://github.c
 > You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for Capycode to work.
 
 ```bash
-npx capycode
+git clone https://github.com/harmonyvt/capycode.git
+cd capycode
+bun install
+bun run dev
 ```
 
-You can also just install the desktop app. It's cooler.
+For now, cloning the repo and running the dev server is the only supported way to use this fork.
 
-Install the [desktop app from the Releases page](https://github.com/harmonyvt/capycode/releases)
-
-## Some notes
+## Notes
 
 We are very very early in this project. Expect bugs.
 
-This is a personal fork, so I am not actively looking for outside contributions.
+This repository is mostly my own personal fork and should generally be ignored unless you specifically care about what I am doing with it.
 
-## If you REALLY want to contribute still.... read this first
+I am not actively looking for outside contributions.
+
+## Contributing
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 
