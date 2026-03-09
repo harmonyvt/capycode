@@ -818,7 +818,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.gitListBranches: {
         const body = stripRequestTag(request.body);
-        return yield* git.listBranches(body);
+        return yield* gitManager.listBranches(body);
       }
 
       case WS_METHODS.gitCreateWorktree: {

@@ -45,6 +45,12 @@
     "dist:desktop:dmg:x64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch x64",
     "dist:desktop:linux": "node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64",
     "dist:desktop:win": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
+    "service:mac:install": "node scripts/macos-launchd.ts install",
+    "service:mac:update": "node scripts/macos-launchd.ts update",
+    "service:mac:uninstall": "node scripts/macos-launchd.ts uninstall",
+    "service:mac:status": "node scripts/macos-launchd.ts status",
+    "service:mac:print": "node scripts/macos-launchd.ts print-plist",
+    "service:mac:show": "node scripts/macos-launchd.ts show-plist",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },

@@ -1,8 +1,13 @@
+import type { GitListedWorktree } from "@t3tools/contracts";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  getProjectWorktreeOptions,
+} from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -23,6 +28,16 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    ...overrides,
+  };
+}
+
+function makeListedWorktree(overrides: Partial<GitListedWorktree> = {}): GitListedWorktree {
+  return {
+    path: "/Users/test/conductor/workspaces/capycode/hartford-v1",
+    branch: "feature/default",
+    current: false,
+    pr: null,
     ...overrides,
   };
 }
@@ -99,5 +114,78 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("getProjectWorktreeOptions", () => {
+  it("maps the active project workspace to a local thread path", () => {
+    const result = getProjectWorktreeOptions("/Users/test/conductor/workspaces/capycode/hartford-v1", [
+      makeListedWorktree({
+        current: true,
+      }),
+    ]);
+
+    expect(result).toEqual([
+      {
+        path: "/Users/test/conductor/workspaces/capycode/hartford-v1",
+        branch: "feature/default",
+        current: true,
+        displayName: "hartford-v1",
+        threadWorktreePath: null,
+        pr: null,
+      },
+    ]);
+  });
+
+  it("keeps sibling worktrees as explicit thread worktree paths", () => {
+    const result = getProjectWorktreeOptions("/Users/test/conductor/workspaces/capycode/hartford-v1", [
+      makeListedWorktree({
+        path: "/Users/test/conductor/workspaces/capycode/lisbon-v1",
+        branch: "feature/lisbon",
+      }),
+    ]);
+
+    expect(result[0]).toEqual({
+      path: "/Users/test/conductor/workspaces/capycode/lisbon-v1",
+      branch: "feature/lisbon",
+      current: false,
+      displayName: "lisbon-v1",
+      threadWorktreePath: "/Users/test/conductor/workspaces/capycode/lisbon-v1",
+      pr: null,
+    });
+  });
+
+  it("deduplicates repeated paths and sorts current worktree first", () => {
+    const result = getProjectWorktreeOptions("/Users/test/conductor/workspaces/capycode/hartford-v1", [
+      makeListedWorktree({
+        path: "/Users/test/conductor/workspaces/capycode/lisbon-v1",
+        branch: "feature/lisbon",
+      }),
+      makeListedWorktree({
+        current: true,
+      }),
+      makeListedWorktree({
+        current: true,
+      }),
+    ]);
+
+    expect(result.map((worktree) => worktree.displayName)).toEqual(["hartford-v1", "lisbon-v1"]);
+  });
+
+  it("preserves cached PR metadata for display", () => {
+    const result = getProjectWorktreeOptions("/Users/test/conductor/workspaces/capycode/hartford-v1", [
+      makeListedWorktree({
+        pr: {
+          number: 9,
+          title: "Add sortable worktree table",
+          url: "https://github.com/example/repo/pull/9",
+          baseBranch: "main",
+          headBranch: "feature/default",
+          state: "open",
+        },
+      }),
+    ]);
+
+    expect(result[0]?.pr?.title).toBe("Add sortable worktree table");
   });
 });

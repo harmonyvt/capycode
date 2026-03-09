@@ -296,6 +296,10 @@ function runStackedAction(
   return manager.runStackedAction(input);
 }
 
+function listBranches(manager: GitManagerShape, cwd: string) {
+  return manager.listBranches({ cwd });
+}
+
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
@@ -444,6 +448,89 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         headBranch: "feature/status-open-over-merged",
         state: "open",
       });
+    }),
+  );
+
+  it.effect("listBranches enriches worktrees with cached PR metadata", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 52,
+                title: "Main PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/52",
+                baseRefName: "develop",
+                headRefName: "main",
+                state: "OPEN",
+                updatedAt: "2026-02-01T10:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const first = yield* listBranches(manager, repoDir);
+      const second = yield* listBranches(manager, repoDir);
+
+      expect(first.worktrees.find((worktree) => worktree.current)?.pr).toEqual({
+        number: 52,
+        title: "Main PR",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/52",
+        baseBranch: "develop",
+        headBranch: "main",
+        state: "open",
+      });
+      expect(second.worktrees.find((worktree) => worktree.current)?.pr?.title).toBe("Main PR");
+      expect(ghCalls.filter((call) => call.startsWith("pr list --state all")).length).toBe(1);
+    }),
+  );
+
+  it.effect("shares cached PR lookups across sibling worktrees in the same repository", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      const worktreeRoot = yield* makeTempDir("t3code-git-worktree-root-");
+      yield* initRepo(repoDir);
+      const worktreeDir = path.join(worktreeRoot, "feature-cache-worktree");
+      yield* runGit(repoDir, ["worktree", "add", "-b", "feature/cache-worktree", worktreeDir, "main"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 61,
+                title: "Main PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/61",
+                baseRefName: "develop",
+                headRefName: "main",
+                state: "OPEN",
+                updatedAt: "2026-02-01T10:00:00Z",
+              },
+              {
+                number: 62,
+                title: "Worktree PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/62",
+                baseRefName: "main",
+                headRefName: "feature/cache-worktree",
+                state: "OPEN",
+                updatedAt: "2026-02-02T10:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const mainStatus = yield* manager.status({ cwd: repoDir });
+      const worktreeStatus = yield* manager.status({ cwd: worktreeDir });
+
+      expect(mainStatus.pr?.title).toBe("Main PR");
+      expect(worktreeStatus.pr?.title).toBe("Worktree PR");
+      expect(ghCalls.filter((call) => call.startsWith("pr list --state all")).length).toBe(1);
     }),
   );
 

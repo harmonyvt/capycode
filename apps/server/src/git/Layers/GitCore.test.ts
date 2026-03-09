@@ -103,6 +103,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
       pullCurrentBranch: (cwd) => core.pullCurrentBranch(cwd),
       readRangeContext: (cwd, baseBranch) => core.readRangeContext(cwd, baseBranch),
       readConfigValue: (cwd, key) => core.readConfigValue(cwd, key),
+      resolveGitCommonDir: (cwd) => core.resolveGitCommonDir(cwd),
       listBranches: (input) => core.listBranches(input),
       createWorktree: (input) => core.createWorktree(input),
       removeWorktree: (input) => core.removeWorktree(input),
@@ -261,6 +262,7 @@ it.layer(TestLayer)("git integration", (it) => {
         const result = yield* listGitBranches({ cwd: tmp });
         expect(result.isRepo).toBe(false);
         expect(result.branches).toEqual([]);
+        expect(result.worktrees).toEqual([]);
       }),
     );
 
@@ -1051,13 +1053,86 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(wtBranches.isRepo).toBe(true);
         const wtCurrent = wtBranches.branches.find((b) => b.current);
         expect(wtCurrent!.name).toBe("wt-list");
+        expect(wtBranches.worktrees).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              branch: "wt-list",
+              current: true,
+              path: expect.stringContaining(path.basename(wtPath)),
+            }),
+          ]),
+        );
 
         // Main repo should still show the original branch as current
         const mainBranches = yield* listGitBranches({ cwd: tmp });
         const mainCurrent = mainBranches.branches.find((b) => b.current);
         expect(mainCurrent!.name).toBe(mainBranch);
+        expect(mainBranches.worktrees).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              branch: mainBranch,
+              current: true,
+              path: expect.stringContaining(path.basename(tmp)),
+            }),
+            expect.objectContaining({
+              branch: "wt-list",
+              current: false,
+              path: expect.stringContaining(path.basename(wtPath)),
+            }),
+          ]),
+        );
 
         yield* removeGitWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
+    it.effect("defaults new worktrees into ~/conductor/workspaces/<project>", () =>
+      Effect.gen(function* () {
+        const tmpHome = yield* makeTmpDir("git-home-");
+        const repoRoot = path.join(tmpHome, "capycode");
+        const conductorProjectDir = path.join(tmpHome, "conductor", "workspaces", "capycode");
+        const mainWorkspacePath = path.join(conductorProjectDir, "hartford-v1");
+        const previousHome = process.env.HOME;
+
+        yield* Effect.sync(() => {
+          process.env.HOME = tmpHome;
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previousHome === undefined) {
+              delete process.env.HOME;
+              return;
+            }
+            process.env.HOME = previousHome;
+          }),
+        );
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(repoRoot, { recursive: true });
+        yield* fileSystem.makeDirectory(conductorProjectDir, { recursive: true });
+
+        yield* initRepoWithCommit(repoRoot);
+        const baseBranch = (yield* listGitBranches({ cwd: repoRoot })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        const workspaceBranch = "workspace/base";
+
+        yield* git(repoRoot, ["worktree", "add", "-b", workspaceBranch, mainWorkspacePath, baseBranch]);
+
+        const result = yield* createGitWorktree({
+          cwd: mainWorkspacePath,
+          branch: workspaceBranch,
+          newBranch: "feature/test-default-path",
+          path: null,
+        });
+
+        expect(result.worktree.path).toBe(
+          path.join(conductorProjectDir, "feature-test-default-path"),
+        );
+        expect(existsSync(result.worktree.path)).toBe(true);
+
+        yield* removeGitWorktree({ cwd: repoRoot, path: result.worktree.path });
+        yield* removeGitWorktree({ cwd: repoRoot, path: mainWorkspacePath });
       }),
     );
 

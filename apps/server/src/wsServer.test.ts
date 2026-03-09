@@ -1574,10 +1574,11 @@ describe("WebSocket Server", () => {
     expect(fs.existsSync(path.join(workspace, "..", "escape.md"))).toBe(false);
   });
 
-  it("routes git core methods over websocket", async () => {
+  it("routes git methods over websocket", async () => {
     const listBranches = vi.fn(() =>
       Effect.succeed({
         branches: [],
+        worktrees: [],
         isRepo: false,
       }),
     );
@@ -1593,6 +1594,12 @@ describe("WebSocket Server", () => {
       ),
     );
 
+    const gitManager: GitManagerShape = {
+      listBranches,
+      status: vi.fn(() => Effect.void as any),
+      runStackedAction: vi.fn(() => Effect.void as any),
+    };
+
     server = await createTestServer({
       cwd: "/test",
       gitCore: {
@@ -1600,6 +1607,7 @@ describe("WebSocket Server", () => {
         initRepo,
         pullCurrentBranch,
       },
+      gitManager,
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -1610,7 +1618,7 @@ describe("WebSocket Server", () => {
 
     const listResponse = await sendRequest(ws, WS_METHODS.gitListBranches, { cwd: "/repo/path" });
     expect(listResponse.error).toBeUndefined();
-    expect(listResponse.result).toEqual({ branches: [], isRepo: false });
+    expect(listResponse.result).toEqual({ branches: [], worktrees: [], isRepo: false });
     expect(listBranches).toHaveBeenCalledWith({ cwd: "/repo/path" });
 
     const initResponse = await sendRequest(ws, WS_METHODS.gitInit, { cwd: "/repo/path" });
@@ -1640,7 +1648,17 @@ describe("WebSocket Server", () => {
 
     const status = vi.fn(() => Effect.succeed(statusResult));
     const runStackedAction = vi.fn(() => Effect.void as any);
-    const gitManager: GitManagerShape = { status, runStackedAction };
+    const gitManager: GitManagerShape = {
+      listBranches: vi.fn(() =>
+        Effect.succeed({
+          branches: [],
+          worktrees: [],
+          isRepo: false,
+        }),
+      ),
+      status,
+      runStackedAction,
+    };
 
     server = await createTestServer({ cwd: "/test", gitManager });
     const addr = server.address();
@@ -1668,6 +1686,13 @@ describe("WebSocket Server", () => {
       ),
     );
     const gitManager: GitManagerShape = {
+      listBranches: vi.fn(() =>
+        Effect.succeed({
+          branches: [],
+          worktrees: [],
+          isRepo: false,
+        }),
+      ),
       status: vi.fn(() => Effect.void as any),
       runStackedAction,
     };

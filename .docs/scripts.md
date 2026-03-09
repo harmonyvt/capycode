@@ -8,8 +8,28 @@
   `bun run dev -- --state-dir ~/.t3/another-dev-state`
 - `bun run start` — Runs the production server (serves built web app as static files).
 - `bun run build` — Builds contracts, web app, and server through Turbo.
+- `bun run service:mac:install` — Builds Capycode, writes `~/Library/LaunchAgents/com.t3tools.capycode.plist`, and loads it as a user background service with `launchctl`.
+- `bun run service:mac:update` — Fast-forwards the repo from `origin/main`, runs `bun install --frozen-lockfile`, rebuilds, and reloads the Capycode LaunchAgent.
+- `bun run service:mac:status` — Prints `launchctl` status for the Capycode LaunchAgent.
+- `bun run service:mac:uninstall` — Unloads and removes the Capycode LaunchAgent plist.
+- `bun run service:mac:print` — Prints the LaunchAgent plist that would be installed.
+- `bun run service:mac:show` — Shows the currently installed LaunchAgent plist.
 - `bun run typecheck` — Strict TypeScript checks for all packages.
 - `bun run test` — Runs workspace tests.
+
+## macOS background service
+
+- The service installer uses a user `LaunchAgent`, not a system `LaunchDaemon`, so it runs with the signed-in user's Codex auth and home directory.
+- Default bind is `127.0.0.1:3773`; override with `-- --host <host> --port <port>`.
+- Default state dir is `~/.t3/userdata`; override with `-- --state-dir <dir>`.
+- Logs go to `~/Library/Logs/capycode/com.t3tools.capycode.stdout.log` and `.stderr.log` by default.
+- Update in place with:
+  `bun run service:mac:update`
+- By default `service:mac:update` refuses to run on a dirty worktree; override only if you mean it with:
+  `bun run service:mac:update -- --allow-dirty`
+- Example install with explicit settings:
+  `bun run service:mac:install -- --host 0.0.0.0 --port 3773 --state-dir ~/.t3/userdata`
+- Re-run `bun run service:mac:install` after moving the repo or changing the Node binary used to install the service, because the plist stores absolute paths.
 - `bun run dist:desktop:artifact -- --platform <mac|linux|win> --target <target> --arch <arch>` — Builds a desktop artifact for a specific platform/target/arch.
 - `bun run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
 - `bun run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.

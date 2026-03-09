@@ -21,6 +21,16 @@ const GitPrStepStatus = Schema.Literals([
 ]);
 const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
 
+export const GitPullRequest = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyStringSchema,
+  url: Schema.String,
+  baseBranch: TrimmedNonEmptyStringSchema,
+  headBranch: TrimmedNonEmptyStringSchema,
+  state: GitStatusPrState,
+});
+export type GitPullRequest = typeof GitPullRequest.Type;
+
 export const GitBranch = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
   isRemote: Schema.optional(Schema.Boolean),
@@ -31,10 +41,19 @@ export const GitBranch = Schema.Struct({
 });
 export type GitBranch = typeof GitBranch.Type;
 
-const GitWorktree = Schema.Struct({
+export const GitWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
 });
+export type GitWorktree = typeof GitWorktree.Type;
+
+export const GitListedWorktree = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  branch: TrimmedNonEmptyStringSchema,
+  current: Schema.Boolean,
+  pr: Schema.NullOr(GitPullRequest),
+});
+export type GitListedWorktree = typeof GitListedWorktree.Type;
 
 // RPC Inputs
 
@@ -95,15 +114,6 @@ export type GitInitInput = typeof GitInitInput.Type;
 
 // RPC Results
 
-const GitStatusPr = Schema.Struct({
-  number: PositiveInt,
-  title: TrimmedNonEmptyStringSchema,
-  url: Schema.String,
-  baseBranch: TrimmedNonEmptyStringSchema,
-  headBranch: TrimmedNonEmptyStringSchema,
-  state: GitStatusPrState,
-});
-
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   hasWorkingTreeChanges: Schema.Boolean,
@@ -121,12 +131,13 @@ export const GitStatusResult = Schema.Struct({
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
-  pr: Schema.NullOr(GitStatusPr),
+  pr: Schema.NullOr(GitPullRequest),
 });
 export type GitStatusResult = typeof GitStatusResult.Type;
 
 export const GitListBranchesResult = Schema.Struct({
   branches: Schema.Array(GitBranch),
+  worktrees: Schema.Array(GitListedWorktree),
   isRepo: Schema.Boolean,
 });
 export type GitListBranchesResult = typeof GitListBranchesResult.Type;
