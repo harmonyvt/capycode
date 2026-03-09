@@ -3,7 +3,7 @@
   "version": "0.0.5",
   "repository": {
     "type": "git",
-    "url": "https://github.com/harmonyvt/t3code",
+    "url": "https://github.com/harmonyvt/capycode",
     "directory": "apps/server"
   },
   "bin": {

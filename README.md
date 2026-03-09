@@ -15,7 +15,7 @@ npx capycode
 
 You can also just install the desktop app. It's cooler.
 
-Install the [desktop app from the Releases page](https://github.com/harmonyvt/t3code/releases)
+Install the [desktop app from the Releases page](https://github.com/harmonyvt/capycode/releases)
 
 ## Some notes
 
