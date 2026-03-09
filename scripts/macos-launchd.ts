@@ -13,9 +13,12 @@ import { Command, Flag } from "effect/unstable/cli";
 
 const DEFAULT_LABEL = "com.t3tools.capycode";
 const DEFAULT_PORT = 3773;
-const DEFAULT_HOST = "127.0.0.1";
+const LOOPBACK_HOST = "127.0.0.1";
+const DEFAULT_HOST = "auto";
 const DEFAULT_STATE_DIR = "~/.t3/userdata";
 const DEFAULT_LOG_DIR = "~/Library/Logs/capycode";
+const TAILSCALE_IP_HOST = "tailscale-ip";
+const TAILSCALE_HOSTNAME_HOST = "tailscale-hostname";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const launchAgentsDir = path.join(os.homedir(), "Library", "LaunchAgents");
 
@@ -37,6 +40,13 @@ interface LaunchAgentOptions {
 interface SpawnResult {
   readonly stdout: string;
   readonly stderr: string;
+}
+
+interface CommandInput {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string;
+  readonly allowFailure?: boolean;
 }
 
 interface InstallInput {
@@ -64,6 +74,40 @@ function expandHomePath(input: string): string {
 
 function sanitizeFileComponent(input: string): string {
   return input.replace(/[^A-Za-z0-9._-]/g, "-");
+}
+
+function normalizeOutputLines(input: string): ReadonlyArray<string> {
+  return input
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+export function parseTailscaleIpv4(input: string): string | undefined {
+  return normalizeOutputLines(input).find((line) => /^\d{1,3}(?:\.\d{1,3}){3}$/u.test(line));
+}
+
+export function parseTailscaleDnsName(input: string): string | undefined {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(input);
+  } catch {
+    return undefined;
+  }
+
+  try {
+    const parsed = Schema.decodeUnknownSync(
+      Schema.Struct({
+        Self: Schema.Struct({
+          DNSName: Schema.String,
+        }),
+      }),
+    )(decoded);
+    const value = parsed.Self.DNSName.trim();
+    return value.length > 0 ? value.replace(/\.$/u, "") : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function xmlEscape(input: string): string {
@@ -191,12 +235,7 @@ const ensureDarwin = Effect.sync(() => {
   }
 });
 
-const runCommand = Effect.fn("runCommand")(function* (input: {
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  readonly cwd?: string;
-  readonly allowFailure?: boolean;
-}) {
+const runCommand = Effect.fn("runCommand")(function* (input: CommandInput) {
   const result = yield* Effect.try({
     try: () =>
       spawnSync(input.command, input.args, {
@@ -230,6 +269,53 @@ const runCommand = Effect.fn("runCommand")(function* (input: {
 
   return { stdout, stderr } satisfies SpawnResult;
 });
+
+export const resolveInstallHost = (
+  host: string,
+  runner: (input: CommandInput) => Effect.Effect<SpawnResult, CliError> = runCommand,
+): Effect.Effect<string, CliError> =>
+  Effect.gen(function* () {
+    if (host === DEFAULT_HOST) {
+      return yield* resolveInstallHost(TAILSCALE_HOSTNAME_HOST, runner).pipe(
+        Effect.catch(() => resolveInstallHost(TAILSCALE_IP_HOST, runner)),
+        Effect.catch(() => Effect.succeed(LOOPBACK_HOST)),
+      );
+    }
+
+    if (host === TAILSCALE_IP_HOST) {
+      const result = yield* runner({
+        command: "tailscale",
+        args: ["ip", "-4"],
+      });
+      const resolvedHost = parseTailscaleIpv4(result.stdout);
+      if (resolvedHost) {
+        return resolvedHost;
+      }
+      return yield* new CliError({
+        message:
+          "Could not resolve a Tailnet IPv4 address from `tailscale ip -4`. Make sure Tailscale is installed and connected.",
+        cause: result.stdout || result.stderr,
+      });
+    }
+
+    if (host === TAILSCALE_HOSTNAME_HOST) {
+      const result = yield* runner({
+        command: "tailscale",
+        args: ["status", "--json"],
+      });
+      const resolvedHost = parseTailscaleDnsName(result.stdout);
+      if (resolvedHost) {
+        return resolvedHost;
+      }
+      return yield* new CliError({
+        message:
+          "Could not resolve a Tailscale MagicDNS hostname from `tailscale status --json`. Make sure Tailscale is installed, connected, and MagicDNS is enabled.",
+        cause: result.stdout || result.stderr,
+      });
+    }
+
+    return host;
+  });
 
 const ensureBuildArtifacts = Effect.fn("ensureBuildArtifacts")(function* () {
   const serverEntry = path.join(repoRoot, "apps", "server", "dist", "index.mjs");
@@ -368,8 +454,10 @@ const installDependencies = Effect.fn("installDependencies")(function* () {
 });
 
 const installLaunchAgent = Effect.fn("installLaunchAgent")(function* (input: InstallInput) {
+  const resolvedHost = yield* resolveInstallHost(input.host);
   const options = resolveLaunchAgentOptions({
     ...input,
+    host: resolvedHost,
     plistPath: Option.getOrUndefined(input.plistPath),
     authToken: Option.getOrUndefined(input.authToken),
   });
@@ -405,7 +493,9 @@ const installFlags = {
     Flag.withDefault(DEFAULT_LABEL),
   ),
   host: Flag.string("host").pipe(
-    Flag.withDescription("Host/interface for the Capycode web server."),
+    Flag.withDescription(
+      `Host/interface for the Capycode web server. Default ${DEFAULT_HOST} prefers Tailscale, then falls back to ${LOOPBACK_HOST}. Use ${TAILSCALE_HOSTNAME_HOST} or ${TAILSCALE_IP_HOST} to force a Tailnet bind.`,
+    ),
     Flag.withDefault(DEFAULT_HOST),
   ),
   port: Flag.integer("port").pipe(
@@ -495,7 +585,7 @@ const uninstallCmd = Command.make(
       const options = resolveLaunchAgentOptions({
         label: input.label,
         plistPath: Option.getOrUndefined(input.plistPath),
-        host: DEFAULT_HOST,
+        host: LOOPBACK_HOST,
         port: DEFAULT_PORT,
         stateDir: DEFAULT_STATE_DIR,
         logDir: DEFAULT_LOG_DIR,
@@ -559,6 +649,7 @@ const printCmd = Command.make(
 
       const options = resolveLaunchAgentOptions({
         ...input,
+        host: yield* resolveInstallHost(input.host),
         plistPath: Option.getOrUndefined(input.plistPath),
         authToken: Option.getOrUndefined(input.authToken),
       });
@@ -580,7 +671,7 @@ const catCmd = Command.make(
       const options = resolveLaunchAgentOptions({
         label: input.label,
         plistPath: Option.getOrUndefined(input.plistPath),
-        host: DEFAULT_HOST,
+        host: LOOPBACK_HOST,
         port: DEFAULT_PORT,
         stateDir: DEFAULT_STATE_DIR,
         logDir: DEFAULT_LOG_DIR,

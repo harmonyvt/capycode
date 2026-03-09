@@ -63,3 +63,27 @@ Open from any device in your tailnet:
 `http://<tailnet-ip>:3773`
 
 You can also bind `--host 0.0.0.0` and connect through the Tailnet IP, but binding directly to the Tailnet IP limits exposure.
+
+## 3) macOS LaunchAgent over Tailscale
+
+The macOS service installer now defaults to `auto`, which prefers your Tailscale hostname, then your Tailnet IPv4, then falls back to `127.0.0.1`.
+
+Recommended:
+
+```bash
+TOKEN="$(openssl rand -hex 24)"
+bun run service:mac:install -- --auth-token "$TOKEN"
+```
+
+If you prefer the current Tailnet IPv4 instead of the MagicDNS hostname:
+
+```bash
+TOKEN="$(openssl rand -hex 24)"
+bun run service:mac:install -- --host tailscale-ip --auth-token "$TOKEN"
+```
+
+Notes:
+
+- `tailscale-hostname` resolves from `tailscale status --json` and usually gives a more stable URL.
+- `tailscale-ip` resolves from `tailscale ip -4`.
+- If you use `--auth-token`, open the UI as `http://<host>:3773/?token=<token>` so the browser can pass it through to the WebSocket handshake.

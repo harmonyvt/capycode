@@ -15,9 +15,11 @@ class MockWebSocket {
 
   readyState = MockWebSocket.CONNECTING;
   readonly sent: string[] = [];
+  readonly url: string;
   private readonly listeners = new Map<WsEventType, Set<WsListener>>();
 
-  constructor(_url: string) {
+  constructor(url: string) {
+    this.url = url;
     sockets.push(this);
   }
 
@@ -70,7 +72,7 @@ beforeEach(() => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
-      location: { hostname: "localhost", port: "3020" },
+      location: { protocol: "http:", hostname: "localhost", port: "3020", search: "" },
       desktopBridge: undefined,
     },
   });
@@ -102,6 +104,28 @@ describe("WsTransport", () => {
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith({ status: "ok" });
+
+    transport.dispose();
+  });
+
+  it("includes the page token in the default websocket URL", () => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          protocol: "https:",
+          hostname: "capycode.tail123.ts.net",
+          port: "3773",
+          search: "?token=secret-token",
+        },
+        desktopBridge: undefined,
+      },
+    });
+
+    const transport = new WsTransport();
+    const socket = getSocket();
+
+    expect(socket.url).toBe("wss://capycode.tail123.ts.net:3773?token=secret-token");
 
     transport.dispose();
   });
