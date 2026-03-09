@@ -26,8 +26,4 @@ This repository is mostly my own personal fork and should generally be ignored u
 
 I am not actively looking for outside contributions.
 
-## Contributing
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
 Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).

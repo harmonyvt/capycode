@@ -490,7 +490,13 @@ export function classifyCodexStderrLine(rawLine: string): { message: string } | 
       return null;
     }
 
-    const isBenignError = BENIGN_ERROR_LOG_SNIPPETS.some((snippet) => line.includes(snippet));
+    const isBenignError =
+      BENIGN_ERROR_LOG_SNIPPETS.some((snippet) => line.includes(snippet)) ||
+      // Codex can emit this rmcp auth-refresh shutdown noise during startup even when
+      // thread creation succeeds and the session becomes ready immediately after.
+      (line.includes("rmcp::transport::worker: worker quit with fatal: Transport channel closed") &&
+        line.includes("Auth(TokenRefreshFailed(") &&
+        line.includes("invalid_grant: Invalid refresh token"));
     if (isBenignError) {
       return null;
     }
