@@ -111,6 +111,11 @@ export interface GitCoreShape {
   ) => Effect.Effect<string | null, GitCommandError>;
 
   /**
+   * Resolve the shared git common directory for the current repository/worktree.
+   */
+  readonly resolveGitCommonDir: (cwd: string) => Effect.Effect<string, GitCommandError>;
+
+  /**
    * List local + remote branches and branch metadata.
    */
   readonly listBranches: (

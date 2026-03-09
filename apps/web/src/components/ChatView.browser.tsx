@@ -266,6 +266,7 @@ function resolveWsRpc(tag: string): unknown {
   if (tag === WS_METHODS.gitListBranches) {
     return {
       isRepo: true,
+      worktrees: [],
       branches: [
         {
           name: "main",

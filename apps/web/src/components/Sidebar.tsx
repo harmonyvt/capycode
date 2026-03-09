@@ -1,7 +1,11 @@
 import {
+  ArrowDownIcon,
   ArrowLeftIcon,
+  ArrowUpDownIcon,
+  ArrowUpIcon,
   ChevronRightIcon,
   FolderIcon,
+  GitBranchIcon,
   GitPullRequestIcon,
   PlusIcon,
   RocketIcon,
@@ -24,12 +28,16 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
-import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
+import { cn, newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
 import { type Thread } from "../types";
 import { derivePendingApprovals } from "../session-logic";
-import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
+import {
+  gitBranchesQueryOptions,
+  gitRemoveWorktreeMutationOptions,
+  gitStatusQueryOptions,
+} from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
@@ -46,12 +54,12 @@ import {
 } from "./desktopUpdate.logic";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Badge } from "./ui/badge";
 import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarHeader,
-  SidebarMenuAction,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -61,8 +69,22 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  getProjectWorktreeOptions,
+  type ProjectWorktreeOption,
+} from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "./ui/menu";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -105,6 +127,94 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
+type WorktreeSortKey = "worktree" | "branch" | "pr";
+type WorktreeSortDirection = "asc" | "desc";
+
+interface WorktreeSortState {
+  key: WorktreeSortKey;
+  direction: WorktreeSortDirection;
+}
+
+const DEFAULT_WORKTREE_SORT: WorktreeSortState = {
+  key: "worktree",
+  direction: "asc",
+};
+
+function compareNullableText(left: string | null, right: string | null): number {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return left.localeCompare(right);
+}
+
+function sortProjectWorktrees(
+  worktrees: readonly ProjectWorktreeOption[],
+  sort: WorktreeSortState,
+): ProjectWorktreeOption[] {
+  return [...worktrees].toSorted((left, right) => {
+    let comparison = 0;
+    let shouldReverseComparison = true;
+
+    if (sort.key === "branch") {
+      comparison = left.branch.localeCompare(right.branch);
+    } else if (sort.key === "pr") {
+      const leftTitle = left.pr?.title ?? null;
+      const rightTitle = right.pr?.title ?? null;
+      const nullableComparison = compareNullableText(leftTitle, rightTitle);
+      if (leftTitle === null || rightTitle === null) {
+        comparison = nullableComparison;
+        shouldReverseComparison = false;
+      } else {
+        comparison = leftTitle.localeCompare(rightTitle);
+      }
+    } else {
+      comparison = left.displayName.localeCompare(right.displayName);
+    }
+
+    if (comparison !== 0) {
+      return sort.direction === "asc" || !shouldReverseComparison ? comparison : -comparison;
+    }
+    if (left.current !== right.current) {
+      return left.current ? -1 : 1;
+    }
+    if ((left.threadWorktreePath === null) !== (right.threadWorktreePath === null)) {
+      return left.threadWorktreePath === null ? -1 : 1;
+    }
+    const byName = left.displayName.localeCompare(right.displayName);
+    if (byName !== 0) return byName;
+    return left.branch.localeCompare(right.branch);
+  });
+}
+
+function nextWorktreeSortState(
+  current: WorktreeSortState,
+  key: WorktreeSortKey,
+): WorktreeSortState {
+  if (current.key !== key) {
+    return {
+      key,
+      direction: key === "pr" ? "desc" : "asc",
+    };
+  }
+  return {
+    key,
+    direction: current.direction === "asc" ? "desc" : "asc",
+  };
+}
+
+function worktreePrStateLabel(pr: ThreadPr): string {
+  if (!pr) return "No PR";
+  if (pr.state === "open") return "Open";
+  if (pr.state === "merged") return "Merged";
+  return "Closed";
+}
+
+function worktreePrStateBadgeVariant(pr: ThreadPr): "outline" | "secondary" | "success" {
+  if (!pr) return "outline";
+  if (pr.state === "open") return "success";
+  if (pr.state === "merged") return "secondary";
+  return "outline";
+}
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -304,6 +414,7 @@ export default function Sidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [worktreeSort, setWorktreeSort] = useState<WorktreeSortState>(DEFAULT_WORKTREE_SORT);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
@@ -345,6 +456,13 @@ export default function Sidebar() {
       refetchInterval: 60_000,
     })),
   });
+  const projectGitBranchesQueries = useQueries({
+    queries: projects.map((project) => ({
+      ...gitBranchesQueryOptions(project.cwd),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    })),
+  });
   const prByThreadId = useMemo(() => {
     const statusByCwd = new Map<string, GitStatusResult>();
     for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
@@ -365,6 +483,26 @@ export default function Sidebar() {
     }
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  const projectGitBranchesByProjectId = useMemo(
+    () =>
+      new Map(
+        projects.map((project, index) => [project.id, projectGitBranchesQueries[index]?.data] as const),
+      ),
+    [projectGitBranchesQueries, projects],
+  );
+  const projectWorktreesByProjectId = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [
+          project.id,
+          getProjectWorktreeOptions(
+            project.cwd,
+            projectGitBranchesByProjectId.get(project.id)?.worktrees ?? [],
+          ),
+        ]),
+      ),
+    [projectGitBranchesByProjectId, projects],
+  );
 
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -1135,6 +1273,18 @@ export default function Sidebar() {
                 hasHiddenThreads && !isThreadListExpanded
                   ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
                   : projectThreads;
+              const projectGitBranches = projectGitBranchesByProjectId.get(project.id) ?? null;
+              const projectWorktrees = projectWorktreesByProjectId.get(project.id) ?? [];
+              const currentProjectBranch =
+                projectGitBranches?.branches.find((branch) => branch.current)?.name ?? null;
+              const projectHasGitWorktrees = projectGitBranches?.isRepo === true;
+              const projectWorktreeMenuMessage =
+                projectGitBranches === null
+                  ? "Loading worktrees..."
+                  : projectHasGitWorktrees
+                    ? "No git worktrees found for this project."
+                    : "Git worktrees are unavailable because this project is not a git repository.";
+              const sortedProjectWorktrees = sortProjectWorktrees(projectWorktrees, worktreeSort);
 
               return (
                 <Collapsible
@@ -1173,34 +1323,197 @@ export default function Sidebar() {
                           {project.name}
                         </span>
                       </CollapsibleTrigger>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <SidebarMenuAction
+                      <div className="pointer-events-none absolute top-1 right-1 flex items-center gap-1 opacity-0 transition-opacity group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100">
+                        <Menu>
+                          <Tooltip>
+                            <TooltipTrigger
                               render={
-                                <button
-                                  type="button"
-                                  aria-label={`Create new thread in ${project.name}`}
-                                />
+                                <MenuTrigger
+                                  render={
+                                    <button
+                                      type="button"
+                                      aria-label={`Create thread from worktree in ${project.name}`}
+                                    />
+                                  }
+                                  className="flex size-5 items-center justify-center rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  onPointerDown={(event) => {
+                                    event.stopPropagation();
+                                  }}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                  }}
+                                >
+                                  <GitBranchIcon className="size-3.5" />
+                                </MenuTrigger>
                               }
-                              showOnHover
-                              className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                void handleNewThread(project.id);
+                            />
+                            <TooltipPopup side="top">New thread from worktree</TooltipPopup>
+                          </Tooltip>
+                          <MenuPopup align="end" className="w-[min(42rem,calc(100vw-2rem))]">
+                            <MenuItem
+                              onClick={() => {
+                                void handleNewThread(project.id, {
+                                  branch: currentProjectBranch,
+                                  worktreePath: null,
+                                  envMode: "worktree",
+                                });
                               }}
                             >
-                              <SquarePenIcon className="size-3.5" />
-                            </SidebarMenuAction>
-                          }
-                        />
-                        <TooltipPopup side="top">
-                          {newThreadShortcutLabel
-                            ? `New thread (${newThreadShortcutLabel})`
-                            : "New thread"}
-                        </TooltipPopup>
-                      </Tooltip>
+                              <PlusIcon className="size-4" />
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-sm">Create new worktree</div>
+                                <div className="truncate text-muted-foreground text-xs">
+                                  Start a draft thread that creates a fresh worktree on first send.
+                                </div>
+                              </div>
+                            </MenuItem>
+                            <MenuSeparator />
+                            <MenuGroup>
+                              <MenuGroupLabel>Available worktrees</MenuGroupLabel>
+                              {projectHasGitWorktrees && projectWorktrees.length > 0 ? (
+                                <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
+                                  <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)_minmax(0,1.35fr)] gap-3 border-b border-border/70 px-3 py-2">
+                                    {([
+                                      ["worktree", "Worktree"],
+                                      ["branch", "Branch"],
+                                      ["pr", "PR"],
+                                    ] as const).map(([key, label]) => (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        className="flex min-w-0 items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:text-foreground"
+                                        onClick={(event) => {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          setWorktreeSort((current) => nextWorktreeSortState(current, key));
+                                        }}
+                                      >
+                                        <span className="truncate">{label}</span>
+                                        {worktreeSort.key === key ? (
+                                          worktreeSort.direction === "asc" ? (
+                                            <ArrowUpIcon className="size-3" />
+                                          ) : (
+                                            <ArrowDownIcon className="size-3" />
+                                          )
+                                        ) : (
+                                          <ArrowUpDownIcon className="size-3 opacity-60" />
+                                        )}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="max-h-80 overflow-y-auto">
+                                    {sortedProjectWorktrees.map((worktree) => (
+                                      <button
+                                        key={worktree.path}
+                                        type="button"
+                                        className={cn(
+                                          "grid w-full grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)_minmax(0,1.35fr)] gap-3 px-3 py-2.5 text-left transition-colors",
+                                          "border-b border-border/60 last:border-b-0 hover:bg-accent/60 focus-visible:bg-accent/70 focus-visible:outline-none",
+                                        )}
+                                        onClick={() => {
+                                          void handleNewThread(project.id, {
+                                            branch: worktree.branch,
+                                            worktreePath: worktree.threadWorktreePath,
+                                            envMode:
+                                              worktree.threadWorktreePath === null ? "local" : "worktree",
+                                          });
+                                        }}
+                                      >
+                                        <div className="min-w-0">
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="truncate font-medium text-sm text-foreground">
+                                              {worktree.displayName}
+                                            </span>
+                                            {worktree.current ? (
+                                              <Badge size="sm" variant="secondary">
+                                                Current
+                                              </Badge>
+                                            ) : null}
+                                            {worktree.threadWorktreePath === null ? (
+                                              <Badge size="sm" variant="outline">
+                                                Workspace
+                                              </Badge>
+                                            ) : null}
+                                          </div>
+                                          <div className="truncate text-muted-foreground text-xs">
+                                            {worktree.threadWorktreePath === null
+                                              ? "Project workspace"
+                                              : formatWorktreePathForDisplay(worktree.path)}
+                                          </div>
+                                        </div>
+                                        <div className="min-w-0">
+                                          <div className="truncate font-mono text-[12px] text-foreground/90">
+                                            {worktree.branch}
+                                          </div>
+                                          <div className="truncate text-muted-foreground text-xs">
+                                            {worktree.threadWorktreePath === null ? "Local thread" : "Worktree thread"}
+                                          </div>
+                                        </div>
+                                        <div className="min-w-0">
+                                          {worktree.pr ? (
+                                            <>
+                                              <div className="truncate font-medium text-sm text-foreground">
+                                                {worktree.pr.title}
+                                              </div>
+                                              <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+                                                <GitPullRequestIcon className="size-3.5 shrink-0" />
+                                                <span className="truncate">#{worktree.pr.number}</span>
+                                                <Badge
+                                                  className="shrink-0"
+                                                  size="sm"
+                                                  variant={worktreePrStateBadgeVariant(worktree.pr)}
+                                                >
+                                                  {worktreePrStateLabel(worktree.pr)}
+                                                </Badge>
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <div className="truncate text-sm text-muted-foreground">
+                                                No PR linked
+                                              </div>
+                                              <div className="text-muted-foreground/80 text-xs">
+                                                Branch has no visible PR
+                                              </div>
+                                            </>
+                                          )}
+                                        </div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="px-2 py-2 text-muted-foreground text-xs">
+                                  {projectWorktreeMenuMessage}
+                                </div>
+                              )}
+                            </MenuGroup>
+                          </MenuPopup>
+                        </Menu>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                aria-label={`Create new thread in ${project.name}`}
+                                className="flex size-5 items-center justify-center rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  void handleNewThread(project.id);
+                                }}
+                              />
+                            }
+                          >
+                            <SquarePenIcon className="size-3.5" />
+                          </TooltipTrigger>
+                          <TooltipPopup side="top">
+                            {newThreadShortcutLabel
+                              ? `New thread (${newThreadShortcutLabel})`
+                              : "New thread"}
+                          </TooltipPopup>
+                        </Tooltip>
+                      </div>
                     </div>
 
                     <CollapsibleContent>

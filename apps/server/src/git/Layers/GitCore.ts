@@ -159,6 +159,30 @@ function commandLabel(args: readonly string[]): string {
   return `git ${args.join(" ")}`;
 }
 
+function resolveConductorProjectDirectory(input: {
+  cwd: string;
+  gitCommonDir: string;
+  homeDir: string;
+  path: Path.Path;
+}): string {
+  const { cwd, gitCommonDir, homeDir, path } = input;
+  const conductorWorkspacesRoot = path.join(homeDir, "conductor", "workspaces");
+  const normalizedRoot = path.normalize(conductorWorkspacesRoot);
+  const normalizedCwd = path.normalize(cwd);
+  const cwdPrefix = `${normalizedRoot}${path.sep}`;
+
+  if (normalizedCwd.startsWith(cwdPrefix)) {
+    const relativeCwd = normalizedCwd.slice(cwdPrefix.length);
+    const [projectDirectoryName] = relativeCwd.split(path.sep);
+    if (projectDirectoryName && projectDirectoryName.trim().length > 0) {
+      return path.join(normalizedRoot, projectDirectoryName);
+    }
+  }
+
+  const repositoryRoot = path.dirname(path.normalize(gitCommonDir));
+  return path.join(normalizedRoot, path.basename(repositoryRoot));
+}
+
 function parseDefaultBranchFromRemoteHeadRef(value: string): string | null {
   const trimmed = value.trim();
   const prefix = "refs/remotes/origin/";
@@ -399,6 +423,16 @@ const makeGitCore = Effect.gen(function* () {
         return parseDefaultBranchFromRemoteHeadRef(result.stdout);
       }),
     );
+
+  const resolveGitCommonDir: GitCoreShape["resolveGitCommonDir"] = (cwd) =>
+    executeGit("GitCore.resolveGitCommonDir", cwd, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ], {
+      timeoutMs: 5_000,
+      fallbackErrorMessage: "git rev-parse --git-common-dir failed",
+    }).pipe(Effect.map((result) => result.stdout.trim()));
 
   const remoteBranchExists = (
     cwd: string,
@@ -844,7 +878,7 @@ const makeGitCore = Effect.gen(function* () {
       if (localBranchResult.code !== 0) {
         const stderr = localBranchResult.stderr.trim();
         if (stderr.toLowerCase().includes("not a git repository")) {
-          return { branches: [], isRepo: false };
+          return { branches: [], worktrees: [], isRepo: false };
         }
         return yield* createGitCommandError(
           "GitCore.listBranches",
@@ -933,6 +967,11 @@ const makeGitCore = Effect.gen(function* () {
           : null;
 
       const worktreeMap = new Map<string, string>();
+      const worktrees: Array<{
+        path: string;
+        branch: string;
+        current: boolean;
+      }> = [];
       if (worktreeList.code === 0) {
         let currentPath: string | null = null;
         for (const line of worktreeList.stdout.split("\n")) {
@@ -944,7 +983,13 @@ const makeGitCore = Effect.gen(function* () {
             );
             currentPath = exists ? candidatePath : null;
           } else if (line.startsWith("branch refs/heads/") && currentPath) {
-            worktreeMap.set(line.slice("branch refs/heads/".length), currentPath);
+            const branch = line.slice("branch refs/heads/".length);
+            worktreeMap.set(branch, currentPath);
+            worktrees.push({
+              path: currentPath,
+              branch,
+              current: false,
+            });
           } else if (line === "") {
             currentPath = null;
           }
@@ -972,6 +1017,14 @@ const makeGitCore = Effect.gen(function* () {
           if (aLastCommit !== bLastCommit) return bLastCommit - aLastCommit;
           return a.name.localeCompare(b.name);
         });
+      const currentLocalBranchName =
+        localBranches.find((branch) => branch.current)?.name ?? null;
+      const resolvedWorktrees = worktrees.map((worktree) => ({
+        path: worktree.path,
+        branch: worktree.branch,
+        current: currentLocalBranchName !== null && worktree.branch === currentLocalBranchName,
+        pr: null,
+      }));
 
       const remoteBranches =
         remoteBranchResult.code === 0
@@ -1010,21 +1063,52 @@ const makeGitCore = Effect.gen(function* () {
 
       const branches = [...localBranches, ...remoteBranches];
 
-      return { branches, isRepo: true };
+      return {
+        branches,
+        worktrees: resolvedWorktrees.toSorted((a, b) => {
+          const aPriority = a.current ? 0 : 1;
+          const bPriority = b.current ? 0 : 1;
+          if (aPriority !== bPriority) return aPriority - bPriority;
+          const byPath = a.path.localeCompare(b.path);
+          if (byPath !== 0) return byPath;
+          return a.branch.localeCompare(b.branch);
+        }),
+        isRepo: true,
+      };
     });
 
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>
     Effect.gen(function* () {
       const sanitizedBranch = input.newBranch.replace(/\//g, "-");
-      const repoName = path.basename(input.cwd);
       const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
+      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+      const projectWorktreeDir = resolveConductorProjectDirectory({
+        cwd: input.cwd,
+        gitCommonDir,
+        homeDir,
+        path,
+      });
       const worktreePath =
-        input.path ?? path.join(homeDir, ".t3", "worktrees", repoName, sanitizedBranch);
+        input.path ?? path.join(projectWorktreeDir, sanitizedBranch);
+
+      const gitWorktreeAddArgs = ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch];
+
+      yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true }).pipe(
+        Effect.mapError((error) =>
+          createGitCommandError(
+            "GitCore.createWorktree.makeDirectory",
+            input.cwd,
+            gitWorktreeAddArgs,
+            `Failed to create worktree parent directory ${path.dirname(worktreePath)}`,
+            error,
+          ),
+        ),
+      );
 
       yield* executeGit(
         "GitCore.createWorktree",
         input.cwd,
-        ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch],
+        gitWorktreeAddArgs,
         {
           fallbackErrorMessage: "git worktree add failed",
         },
@@ -1195,6 +1279,7 @@ const makeGitCore = Effect.gen(function* () {
     pullCurrentBranch,
     readRangeContext,
     readConfigValue,
+    resolveGitCommonDir,
     listBranches,
     createWorktree,
     removeWorktree,

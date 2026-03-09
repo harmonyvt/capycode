@@ -7,6 +7,8 @@
  * @module GitManager
  */
 import {
+  GitListBranchesInput,
+  GitListBranchesResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
@@ -20,6 +22,13 @@ import type { GitManagerServiceError } from "../Errors.ts";
  * GitManagerShape - Service API for high-level Git workflow actions.
  */
 export interface GitManagerShape {
+  /**
+   * Read repository branches/worktrees plus cached PR metadata for listed worktrees.
+   */
+  readonly listBranches: (
+    input: GitListBranchesInput,
+  ) => Effect.Effect<GitListBranchesResult, GitManagerServiceError>;
+
   /**
    * Read current repository Git status plus open PR metadata when available.
    */

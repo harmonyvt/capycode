@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Cache, Data, Duration, Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { resolveAutoFeatureBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { GitManagerError } from "../Errors.ts";
@@ -21,6 +21,20 @@ interface PullRequestInfo extends OpenPrInfo {
   state: "open" | "closed" | "merged";
   updatedAt: string | null;
 }
+
+class PullRequestListCacheKey extends Data.Class<{
+  repositoryKey: string;
+}> {}
+
+class PullRequestBranchCacheKey extends Data.Class<{
+  repositoryKey: string;
+  branch: string;
+}> {}
+
+const PULL_REQUEST_LIST_CACHE_CAPACITY = 256;
+const PULL_REQUEST_LIST_CACHE_TTL = Duration.seconds(60);
+const PULL_REQUEST_LIST_FAILURE_CACHE_TTL = Duration.seconds(30);
+const PULL_REQUEST_BRANCH_CACHE_CAPACITY = 1024;
 
 function parsePullRequestList(raw: unknown): PullRequestInfo[] {
   if (!Array.isArray(raw)) return [];
@@ -175,6 +189,37 @@ function toStatusPr(pr: PullRequestInfo): {
   };
 }
 
+function sortPullRequestsByUpdatedAtDesc(
+  left: PullRequestInfo,
+  right: PullRequestInfo,
+): number {
+  const leftUpdatedAt = left.updatedAt ? Date.parse(left.updatedAt) : 0;
+  const rightUpdatedAt = right.updatedAt ? Date.parse(right.updatedAt) : 0;
+  return rightUpdatedAt - leftUpdatedAt;
+}
+
+function buildLatestPullRequestMap(
+  pullRequests: ReadonlyArray<PullRequestInfo>,
+): Map<string, PullRequestInfo> {
+  const latestByHeadBranch = new Map<string, PullRequestInfo>();
+
+  for (const pullRequest of pullRequests.toSorted(sortPullRequestsByUpdatedAtDesc)) {
+    const existing = latestByHeadBranch.get(pullRequest.headRefName);
+    if (!existing || (existing.state !== "open" && pullRequest.state === "open")) {
+      latestByHeadBranch.set(pullRequest.headRefName, pullRequest);
+    }
+  }
+
+  return latestByHeadBranch;
+}
+
+function selectLatestPullRequest(
+  pullRequests: ReadonlyArray<PullRequestInfo>,
+): PullRequestInfo | null {
+  const [latest] = buildLatestPullRequestMap(pullRequests).values();
+  return latest ?? null;
+}
+
 export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
   const gitHubCli = yield* GitHubCli;
@@ -183,6 +228,107 @@ export const makeGitManager = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
+
+  const pullRequestListCache = yield* Cache.makeWith({
+    capacity: PULL_REQUEST_LIST_CACHE_CAPACITY,
+    lookup: (cacheKey: PullRequestListCacheKey) =>
+      gitHubCli
+        .execute({
+          cwd: path.dirname(cacheKey.repositoryKey),
+          args: [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--limit",
+            "200",
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+          ],
+        })
+        .pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.flatMap((raw) =>
+            Effect.try({
+              try: () =>
+                buildLatestPullRequestMap(
+                  raw.length === 0 ? [] : parsePullRequestList(JSON.parse(raw) as unknown),
+                ),
+              catch: (cause) =>
+                gitManagerError(
+                  "listCachedPullRequests",
+                  "GitHub CLI returned invalid PR list JSON.",
+                  cause,
+                ),
+            }),
+          ),
+        ),
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) ? PULL_REQUEST_LIST_CACHE_TTL : PULL_REQUEST_LIST_FAILURE_CACHE_TTL,
+  });
+
+  const pullRequestBranchCache = yield* Cache.makeWith({
+    capacity: PULL_REQUEST_BRANCH_CACHE_CAPACITY,
+    lookup: (cacheKey: PullRequestBranchCacheKey) =>
+      gitHubCli
+        .execute({
+          cwd: path.dirname(cacheKey.repositoryKey),
+          args: [
+            "pr",
+            "list",
+            "--head",
+            cacheKey.branch,
+            "--state",
+            "all",
+            "--limit",
+            "20",
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+          ],
+        })
+        .pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.flatMap((raw) =>
+            Effect.try({
+              try: () =>
+                selectLatestPullRequest(
+                  raw.length === 0 ? [] : parsePullRequestList(JSON.parse(raw) as unknown),
+                ),
+              catch: (cause) =>
+                gitManagerError(
+                  "listCachedPullRequestsForBranch",
+                  "GitHub CLI returned invalid PR list JSON.",
+                  cause,
+                ),
+            }),
+          ),
+        ),
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) ? PULL_REQUEST_LIST_CACHE_TTL : PULL_REQUEST_LIST_FAILURE_CACHE_TTL,
+  });
+
+  const readLatestPullRequest = (cwd: string, branch: string) =>
+    Effect.gen(function* () {
+      const repositoryKey = yield* gitCore.resolveGitCommonDir(cwd);
+      const cachedRepositoryPullRequests = yield* Cache.get(
+        pullRequestListCache,
+        new PullRequestListCacheKey({
+          repositoryKey,
+        }),
+      );
+      const cachedPullRequest = cachedRepositoryPullRequests.get(branch);
+      if (cachedPullRequest) {
+        return cachedPullRequest;
+      }
+
+      return yield* Cache.get(
+        pullRequestBranchCache,
+        new PullRequestBranchCacheKey({
+          repositoryKey,
+          branch,
+        }),
+      );
+    });
 
   const findOpenPr = (cwd: string, branch: string) =>
     gitHubCli
@@ -208,50 +354,6 @@ export const makeGitManager = Effect.gen(function* () {
           } satisfies PullRequestInfo;
         }),
       );
-
-  const findLatestPr = (cwd: string, branch: string) =>
-    Effect.gen(function* () {
-      const stdout = yield* gitHubCli
-        .execute({
-          cwd,
-          args: [
-            "pr",
-            "list",
-            "--head",
-            branch,
-            "--state",
-            "all",
-            "--limit",
-            "20",
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
-          ],
-        })
-        .pipe(Effect.map((result) => result.stdout));
-
-      const raw = stdout.trim();
-      if (raw.length === 0) {
-        return null;
-      }
-
-      const parsedJson = yield* Effect.try({
-        try: () => JSON.parse(raw) as unknown,
-        catch: (cause) =>
-          gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
-      });
-
-      const parsed = parsePullRequestList(parsedJson).toSorted((a, b) => {
-        const left = a.updatedAt ? Date.parse(a.updatedAt) : 0;
-        const right = b.updatedAt ? Date.parse(b.updatedAt) : 0;
-        return right - left;
-      });
-
-      const latestOpenPr = parsed.find((pr) => pr.state === "open");
-      if (latestOpenPr) {
-        return latestOpenPr;
-      }
-      return parsed[0] ?? null;
-    });
 
   const resolveBaseBranch = (cwd: string, branch: string, upstreamRef: string | null) =>
     Effect.gen(function* () {
@@ -402,6 +504,20 @@ export const makeGitManager = Effect.gen(function* () {
           bodyFile,
         })
         .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
+      const repositoryKey = yield* gitCore.resolveGitCommonDir(cwd);
+      yield* Cache.invalidate(
+        pullRequestListCache,
+        new PullRequestListCacheKey({
+          repositoryKey,
+        }),
+      );
+      yield* Cache.invalidate(
+        pullRequestBranchCache,
+        new PullRequestBranchCacheKey({
+          repositoryKey,
+          branch,
+        }),
+      );
 
       const created = yield* findOpenPr(cwd, branch);
       if (!created) {
@@ -423,12 +539,79 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
+  const listBranches: GitManagerShape["listBranches"] = Effect.fnUntraced(function* (input) {
+    const branches = yield* gitCore.listBranches(input);
+    if (!branches.isRepo || branches.worktrees.length === 0) {
+      return branches;
+    }
+
+    const repositoryKey = yield* gitCore.resolveGitCommonDir(input.cwd).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    const latestPullRequestByBranch =
+      repositoryKey === null
+        ? new Map<string, PullRequestInfo>()
+        : yield* Cache.get(
+            pullRequestListCache,
+            new PullRequestListCacheKey({
+              repositoryKey,
+            }),
+          ).pipe(Effect.catch(() => Effect.succeed(new Map<string, PullRequestInfo>())));
+
+    const missingBranches =
+      repositoryKey === null
+        ? []
+        : Array.from(
+            new Set(
+              branches.worktrees
+                .map((worktree) => worktree.branch)
+                .filter((branch) => !latestPullRequestByBranch.has(branch)),
+            ),
+          );
+    const fallbackPullRequestsByBranch = new Map<string, PullRequestInfo>();
+    if (repositoryKey !== null && missingBranches.length > 0) {
+      const fallbackPullRequests = yield* Effect.all(
+        missingBranches.map((branch) =>
+          Cache.get(
+            pullRequestBranchCache,
+            new PullRequestBranchCacheKey({
+              repositoryKey,
+              branch,
+            }),
+          ).pipe(Effect.map((pullRequest) => [branch, pullRequest] as const)),
+        ),
+        { concurrency: 4 },
+      ).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<readonly [string, PullRequestInfo | null]>)));
+
+      for (const [branch, pullRequest] of fallbackPullRequests) {
+        if (pullRequest) {
+          fallbackPullRequestsByBranch.set(branch, pullRequest);
+        }
+      }
+    }
+
+    return {
+      ...branches,
+      worktrees: branches.worktrees.map((worktree) => {
+        const pullRequest =
+          latestPullRequestByBranch.get(worktree.branch) ??
+          fallbackPullRequestsByBranch.get(worktree.branch);
+        return {
+          path: worktree.path,
+          branch: worktree.branch,
+          current: worktree.current,
+          pr: pullRequest ? toStatusPr(pullRequest) : null,
+        };
+      }),
+    };
+  });
+
   const status: GitManagerShape["status"] = Effect.fnUntraced(function* (input) {
     const details = yield* gitCore.statusDetails(input.cwd);
 
     const pr =
       details.branch !== null
-        ? yield* findLatestPr(input.cwd, details.branch).pipe(
+        ? yield* readLatestPullRequest(input.cwd, details.branch).pipe(
             Effect.map((latest) => (latest ? toStatusPr(latest) : null)),
             Effect.catch(() => Effect.succeed(null)),
           )
@@ -535,6 +718,7 @@ export const makeGitManager = Effect.gen(function* () {
   );
 
   return {
+    listBranches,
     status,
     runStackedAction,
   } satisfies GitManagerShape;
