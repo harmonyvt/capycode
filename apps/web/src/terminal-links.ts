@@ -14,7 +14,8 @@ const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/g;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:\\|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
-const LAST_EDITOR_KEY = "t3code:last-editor";
+const LAST_EDITOR_KEY = "capycode:last-editor";
+const LEGACY_LAST_EDITOR_KEY = "t3code:last-editor";
 
 function trimClosingDelimiters(value: string): string {
   let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
@@ -183,7 +184,8 @@ export function preferredTerminalEditor(): EditorId {
     return fallback;
   }
 
-  const storedEditor = window.localStorage.getItem(LAST_EDITOR_KEY);
+  const storedEditor =
+    window.localStorage.getItem(LAST_EDITOR_KEY) ?? window.localStorage.getItem(LEGACY_LAST_EDITOR_KEY);
   if (!storedEditor) {
     return fallback;
   }

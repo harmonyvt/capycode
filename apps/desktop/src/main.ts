@@ -45,11 +45,11 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
-const DESKTOP_SCHEME = "t3";
+const DESKTOP_SCHEME = "capycode";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
-const APP_USER_MODEL_ID = "com.t3tools.t3code";
+const APP_DISPLAY_NAME = isDevelopment ? "Capycode (Dev)" : "Capycode (Alpha)";
+const APP_USER_MODEL_ID = "com.t3tools.capycode";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
@@ -296,8 +296,8 @@ function resolveEmbeddedCommitHash(): string | null {
 
   try {
     const raw = FS.readFileSync(packageJsonPath, "utf8");
-    const parsed = JSON.parse(raw) as { t3codeCommitHash?: unknown };
-    return normalizeCommitHash(parsed.t3codeCommitHash);
+    const parsed = JSON.parse(raw) as { capycodeCommitHash?: unknown };
+    return normalizeCommitHash(parsed.capycodeCommitHash);
   } catch {
     return null;
   }
@@ -392,7 +392,7 @@ function handleFatalStartupError(stage: string, error: unknown): void {
   console.error(`[desktop] fatal startup error (${stage})`, error);
   if (!isQuitting) {
     isQuitting = true;
-    dialog.showErrorBox("T3 Code failed to start", `Stage: ${stage}\n${message}${detail}`);
+    dialog.showErrorBox("Capycode failed to start", `Stage: ${stage}\n${message}${detail}`);
   }
   stopBackend();
   restoreStdIoCapture?.();

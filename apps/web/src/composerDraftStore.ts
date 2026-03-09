@@ -17,7 +17,8 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+export const COMPOSER_DRAFT_STORAGE_KEY = "capycode:composer-drafts:v1";
+const LEGACY_COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 export type DraftThreadEnvMode = "local" | "worktree";
 
 export interface PersistedComposerImageAttachment {
@@ -439,7 +440,9 @@ function readPersistedAttachmentIdsFromStorage(threadId: ThreadId): string[] {
     return [];
   }
   try {
-    const raw = localStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+    const raw =
+      localStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY) ??
+      localStorage.getItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY);
     const persisted = parsePersistedDraftStateRaw(raw);
     return (persisted.draftsByThreadId[threadId]?.attachments ?? []).map(
       (attachment) => attachment.id,
@@ -1170,6 +1173,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
       name: COMPOSER_DRAFT_STORAGE_KEY,
       version: 1,
       storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: () => () => {
+        localStorage.removeItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY);
+      },
       partialize: (state) => {
         const persistedDraftsByThreadId: PersistedComposerDraftStoreState["draftsByThreadId"] = {};
         for (const [threadId, draft] of Object.entries(state.draftsByThreadId)) {

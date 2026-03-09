@@ -96,7 +96,7 @@ export interface ServerShape {
 /**
  * Server - Service tag for HTTP/WebSocket lifecycle management.
  */
-export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
+export class Server extends ServiceMap.Service<Server, ServerShape>()("capycode/wsServer/Server") {}
 
 const isServerNotRunningError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;

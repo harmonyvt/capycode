@@ -166,7 +166,7 @@ interface StagePackageJson {
   readonly name: string;
   readonly version: string;
   readonly buildVersion: string;
-  readonly t3codeCommitHash: string;
+  readonly capycodeCommitHash: string;
   readonly private: true;
   readonly description: string;
   readonly author: string;
@@ -447,9 +447,9 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: "com.t3tools.t3code",
+    appId: "com.t3tools.capycode",
     productName,
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: "Capycode-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -562,7 +562,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const commitHash = resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
-    prefix: `t3code-desktop-${options.platform}-stage-`,
+    prefix: `capycode-desktop-${options.platform}-stage-`,
   });
 
   const stageAppDir = path.join(stageRoot, "app");
@@ -613,18 +613,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
 
   const stagePackageJson: StagePackageJson = {
-    name: "t3-code-desktop",
+    name: "capycode-desktop",
     version: appVersion,
     buildVersion: appVersion,
-    t3codeCommitHash: commitHash,
+    capycodeCommitHash: commitHash,
     private: true,
-    description: "T3 Code desktop build",
-    author: "T3 Tools",
+    description: "Capycode desktop build",
+    author: "Capycode",
     main: "apps/desktop/dist-electron/main.js",
     build: yield* createBuildConfig(
       options.platform,
       options.target,
-      desktopPackageJson.productName ?? "T3 Code",
+      desktopPackageJson.productName ?? "Capycode",
       options.signed,
     ),
     dependencies: {
@@ -765,7 +765,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Code."),
+  Command.withDescription("Build a desktop artifact for Capycode."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

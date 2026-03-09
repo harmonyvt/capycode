@@ -23,8 +23,9 @@ export interface AppState {
   threadsHydrated: boolean;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
+const PERSISTED_STATE_KEY = "capycode:renderer-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "t3code:renderer-state:v8",
   "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
   "t3code:renderer-state:v4",
@@ -47,7 +48,12 @@ const persistedExpandedProjectCwds = new Set<string>();
 function readPersistedState(): AppState {
   if (typeof window === "undefined") return initialState;
   try {
-    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
+    const raw =
+      window.localStorage.getItem(PERSISTED_STATE_KEY) ??
+      LEGACY_PERSISTED_STATE_KEYS.map((key) => window.localStorage.getItem(key)).find(
+        (value): value is string => typeof value === "string",
+      ) ??
+      null;
     if (!raw) return initialState;
     const parsed = JSON.parse(raw) as { expandedProjectCwds?: string[] };
     persistedExpandedProjectCwds.clear();

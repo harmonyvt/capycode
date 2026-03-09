@@ -68,7 +68,7 @@ export interface CliConfigShape {
  * CliConfig - Service tag for startup CLI/runtime helpers.
  */
 export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
-  "t3/main/CliConfig",
+  "capycode/main/CliConfig",
 ) {
   static readonly layer = Layer.effect(
     CliConfig,
@@ -262,7 +262,7 @@ const makeServerProgram = (input: CliInput) =>
         ? `http://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
     const { authToken, devUrl, ...safeConfig } = config;
-    yield* Effect.logInfo("T3 Code running", {
+    yield* Effect.logInfo("Capycode running", {
       ...safeConfig,
       devUrl: devUrl?.toString(),
       authEnabled: Boolean(authToken),
@@ -331,7 +331,7 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.optional,
 );
 
-export const t3Cli = Command.make("t3", {
+export const t3Cli = Command.make("capycode", {
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
@@ -342,6 +342,6 @@ export const t3Cli = Command.make("t3", {
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(
-  Command.withDescription("Run the T3 Code server."),
+  Command.withDescription("Run the Capycode server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
 );
