@@ -70,10 +70,13 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import {
+  DEFAULT_WORKTREE_SORT,
   formatWorktreePathForDisplay,
   getOrphanedWorktreePathForThread,
   getProjectWorktreeOptions,
-  type ProjectWorktreeOption,
+  nextWorktreeSortState,
+  sortProjectWorktrees,
+  type WorktreeSortState,
 } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
@@ -127,80 +130,6 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
-type WorktreeSortKey = "worktree" | "branch" | "pr";
-type WorktreeSortDirection = "asc" | "desc";
-
-interface WorktreeSortState {
-  key: WorktreeSortKey;
-  direction: WorktreeSortDirection;
-}
-
-const DEFAULT_WORKTREE_SORT: WorktreeSortState = {
-  key: "worktree",
-  direction: "asc",
-};
-
-function compareNullableText(left: string | null, right: string | null): number {
-  if (left === null && right === null) return 0;
-  if (left === null) return 1;
-  if (right === null) return -1;
-  return left.localeCompare(right);
-}
-
-function sortProjectWorktrees(
-  worktrees: readonly ProjectWorktreeOption[],
-  sort: WorktreeSortState,
-): ProjectWorktreeOption[] {
-  return [...worktrees].toSorted((left, right) => {
-    let comparison = 0;
-    let shouldReverseComparison = true;
-
-    if (sort.key === "branch") {
-      comparison = left.branch.localeCompare(right.branch);
-    } else if (sort.key === "pr") {
-      const leftTitle = left.pr?.title ?? null;
-      const rightTitle = right.pr?.title ?? null;
-      const nullableComparison = compareNullableText(leftTitle, rightTitle);
-      if (leftTitle === null || rightTitle === null) {
-        comparison = nullableComparison;
-        shouldReverseComparison = false;
-      } else {
-        comparison = leftTitle.localeCompare(rightTitle);
-      }
-    } else {
-      comparison = left.displayName.localeCompare(right.displayName);
-    }
-
-    if (comparison !== 0) {
-      return sort.direction === "asc" || !shouldReverseComparison ? comparison : -comparison;
-    }
-    if (left.current !== right.current) {
-      return left.current ? -1 : 1;
-    }
-    if ((left.threadWorktreePath === null) !== (right.threadWorktreePath === null)) {
-      return left.threadWorktreePath === null ? -1 : 1;
-    }
-    const byName = left.displayName.localeCompare(right.displayName);
-    if (byName !== 0) return byName;
-    return left.branch.localeCompare(right.branch);
-  });
-}
-
-function nextWorktreeSortState(
-  current: WorktreeSortState,
-  key: WorktreeSortKey,
-): WorktreeSortState {
-  if (current.key !== key) {
-    return {
-      key,
-      direction: key === "pr" ? "desc" : "asc",
-    };
-  }
-  return {
-    key,
-    direction: current.direction === "asc" ? "desc" : "asc",
-  };
-}
 
 function worktreePrStateLabel(pr: ThreadPr): string {
   if (!pr) return "No PR";

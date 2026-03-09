@@ -54,6 +54,19 @@ export interface ProjectWorktreeOption {
   pr: GitListedWorktree["pr"];
 }
 
+export type WorktreeSortKey = "worktree" | "branch" | "pr";
+export type WorktreeSortDirection = "asc" | "desc";
+
+export interface WorktreeSortState {
+  key: WorktreeSortKey;
+  direction: WorktreeSortDirection;
+}
+
+export const DEFAULT_WORKTREE_SORT: WorktreeSortState = {
+  key: "worktree",
+  direction: "asc",
+};
+
 export function getProjectWorktreeOptions(
   projectCwd: string,
   worktrees: readonly GitListedWorktree[],
@@ -88,4 +101,60 @@ export function getProjectWorktreeOptions(
       if (byDisplayName !== 0) return byDisplayName;
       return a.branch.localeCompare(b.branch);
     });
+}
+
+export function sortProjectWorktrees(
+  worktrees: readonly ProjectWorktreeOption[],
+  sort: WorktreeSortState,
+): ProjectWorktreeOption[] {
+  return [...worktrees].toSorted((left, right) => {
+    let comparison = 0;
+
+    if (sort.key === "branch") {
+      comparison = left.branch.localeCompare(right.branch);
+    } else if (sort.key === "pr") {
+      const leftNumber = left.pr?.number ?? null;
+      const rightNumber = right.pr?.number ?? null;
+      if (leftNumber === null && rightNumber === null) {
+        comparison = 0;
+      } else if (leftNumber === null) {
+        comparison = 1;
+      } else if (rightNumber === null) {
+        comparison = -1;
+      } else {
+        comparison = leftNumber - rightNumber;
+      }
+    } else {
+      comparison = left.displayName.localeCompare(right.displayName);
+    }
+
+    if (comparison !== 0) {
+      return sort.direction === "asc" ? comparison : -comparison;
+    }
+    if (left.current !== right.current) {
+      return left.current ? -1 : 1;
+    }
+    if ((left.threadWorktreePath === null) !== (right.threadWorktreePath === null)) {
+      return left.threadWorktreePath === null ? -1 : 1;
+    }
+    const byName = left.displayName.localeCompare(right.displayName);
+    if (byName !== 0) return byName;
+    return left.branch.localeCompare(right.branch);
+  });
+}
+
+export function nextWorktreeSortState(
+  current: WorktreeSortState,
+  key: WorktreeSortKey,
+): WorktreeSortState {
+  if (current.key !== key) {
+    return {
+      key,
+      direction: key === "pr" ? "desc" : "asc",
+    };
+  }
+  return {
+    key,
+    direction: current.direction === "asc" ? "desc" : "asc",
+  };
 }

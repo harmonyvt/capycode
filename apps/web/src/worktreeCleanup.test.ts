@@ -4,9 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 import {
+  DEFAULT_WORKTREE_SORT,
   formatWorktreePathForDisplay,
   getOrphanedWorktreePathForThread,
   getProjectWorktreeOptions,
+  nextWorktreeSortState,
+  sortProjectWorktrees,
 } from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -187,5 +190,84 @@ describe("getProjectWorktreeOptions", () => {
     ]);
 
     expect(result[0]?.pr?.title).toBe("Add sortable worktree table");
+  });
+});
+
+describe("sortProjectWorktrees", () => {
+  it("sorts PRs by numeric PR number descending by default", () => {
+    const worktrees = getProjectWorktreeOptions("/Users/test/conductor/workspaces/capycode/hartford-v1", [
+      makeListedWorktree({
+        path: "/Users/test/conductor/workspaces/capycode/pr-120",
+        branch: "feature/pr-120",
+        pr: {
+          number: 120,
+          title: "Lower title",
+          url: "https://github.com/example/repo/pull/120",
+          baseBranch: "main",
+          headBranch: "feature/pr-120",
+          state: "open",
+        },
+      }),
+      makeListedWorktree({
+        path: "/Users/test/conductor/workspaces/capycode/pr-9",
+        branch: "feature/pr-9",
+        pr: {
+          number: 9,
+          title: "Higher title",
+          url: "https://github.com/example/repo/pull/9",
+          baseBranch: "main",
+          headBranch: "feature/pr-9",
+          state: "open",
+        },
+      }),
+    ]);
+
+    const result = sortProjectWorktrees(worktrees, { key: "pr", direction: "desc" });
+
+    expect(result.map((worktree) => worktree.pr?.number)).toEqual([120, 9]);
+  });
+
+  it("sorts PRs by numeric PR number ascending when toggled", () => {
+    const worktrees = getProjectWorktreeOptions("/Users/test/conductor/workspaces/capycode/hartford-v1", [
+      makeListedWorktree({
+        path: "/Users/test/conductor/workspaces/capycode/pr-120",
+        branch: "feature/pr-120",
+        pr: {
+          number: 120,
+          title: "PR 120",
+          url: "https://github.com/example/repo/pull/120",
+          baseBranch: "main",
+          headBranch: "feature/pr-120",
+          state: "open",
+        },
+      }),
+      makeListedWorktree({
+        path: "/Users/test/conductor/workspaces/capycode/no-pr",
+        branch: "feature/no-pr",
+      }),
+      makeListedWorktree({
+        path: "/Users/test/conductor/workspaces/capycode/pr-9",
+        branch: "feature/pr-9",
+        pr: {
+          number: 9,
+          title: "PR 9",
+          url: "https://github.com/example/repo/pull/9",
+          baseBranch: "main",
+          headBranch: "feature/pr-9",
+          state: "open",
+        },
+      }),
+    ]);
+
+    const result = sortProjectWorktrees(worktrees, { key: "pr", direction: "asc" });
+
+    expect(result.map((worktree) => worktree.pr?.number ?? null)).toEqual([9, 120, null]);
+  });
+});
+
+describe("nextWorktreeSortState", () => {
+  it("defaults PR sorting to descending when first selected", () => {
+    const result = nextWorktreeSortState(DEFAULT_WORKTREE_SORT, "pr");
+    expect(result).toEqual({ key: "pr", direction: "desc" });
   });
 });
