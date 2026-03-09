@@ -3,7 +3,8 @@ import { Option, Schema } from "effect";
 import { type ProviderKind, type ProviderServiceTier } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
-const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
+const APP_SETTINGS_STORAGE_KEY = "capycode:app-settings:v1";
+const LEGACY_APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 export const APP_SERVICE_TIER_OPTIONS = [
@@ -222,7 +223,9 @@ export function getAppSettingsSnapshot(): AppSettings {
     return DEFAULT_APP_SETTINGS;
   }
 
-  const raw = window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+  const raw =
+    window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY) ??
+    window.localStorage.getItem(LEGACY_APP_SETTINGS_STORAGE_KEY);
   if (raw === cachedRawSettings) {
     return cachedSnapshot;
   }
@@ -239,6 +242,7 @@ function persistSettings(next: AppSettings): void {
   try {
     if (raw !== cachedRawSettings) {
       window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, raw);
+      window.localStorage.removeItem(LEGACY_APP_SETTINGS_STORAGE_KEY);
     }
   } catch {
     // Best-effort persistence only.

@@ -1,27 +1,32 @@
-# T3 Code
+# Capycode
 
-T3 Code is a minimal web GUI for coding agents. Currently Codex-first, with Claude Code support coming soon.
+Capycode is my personal fork of T3 Code, a minimal web GUI for coding agents. It is currently Codex-first, with Claude Code support coming soon.
+
+I occasionally pull in upstream updates from [pingdotgg/t3code](https://github.com/pingdotgg/t3code) when they are relevant to this fork.
 
 ## How to use
 
 > [!WARNING]
-> You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for T3 Code to work.
+> You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for Capycode to work.
 
 ```bash
-npx t3
+git clone https://github.com/harmonyvt/capycode.git
+cd capycode
+bun install
+bun run dev
 ```
 
-You can also just install the desktop app. It's cooler.
+For now, cloning the repo and running the dev server is the only supported way to use this fork.
 
-Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
-
-## Some notes
+## Notes
 
 We are very very early in this project. Expect bugs.
 
-We are not accepting contributions yet.
+This repository is mostly my own personal fork and should generally be ignored unless you specifically care about what I am doing with it.
 
-## If you REALLY want to contribute still.... read this first
+I am not actively looking for outside contributions.
+
+## Contributing
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 

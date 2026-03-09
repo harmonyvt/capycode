@@ -15,9 +15,10 @@ import {
   type ChatImageAttachment,
 } from "./types";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
-export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+export const COMPOSER_DRAFT_STORAGE_KEY = "capycode:composer-drafts:v1";
+const LEGACY_COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 export type DraftThreadEnvMode = "local" | "worktree";
 
 export interface PersistedComposerImageAttachment {
@@ -439,7 +440,9 @@ function readPersistedAttachmentIdsFromStorage(threadId: ThreadId): string[] {
     return [];
   }
   try {
-    const raw = localStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+    const raw =
+      localStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY) ??
+      localStorage.getItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY);
     const persisted = parsePersistedDraftStateRaw(raw);
     return (persisted.draftsByThreadId[threadId]?.attachments ?? []).map(
       (attachment) => attachment.id,
@@ -519,6 +522,90 @@ function toHydratedThreadDraft(
     codexFastMode: persistedDraft.codexFastMode === true,
   };
 }
+
+interface SyncComposerDraftStorageBackend {
+  getItem: (name: string) => string | null;
+  setItem: (name: string, value: string) => void;
+  removeItem: (name: string) => void;
+}
+
+function getComposerDraftStorageBackend(): SyncComposerDraftStorageBackend | null {
+  const storageCandidate =
+    typeof window !== "undefined"
+      ? window.localStorage
+      : typeof globalThis !== "undefined" && "localStorage" in globalThis
+        ? (globalThis.localStorage as Partial<SyncComposerDraftStorageBackend>)
+        : null;
+
+  if (
+    !storageCandidate ||
+    typeof storageCandidate.getItem !== "function" ||
+    typeof storageCandidate.setItem !== "function" ||
+    typeof storageCandidate.removeItem !== "function"
+  ) {
+    return null;
+  }
+
+  return storageCandidate as SyncComposerDraftStorageBackend;
+}
+
+function hasPersistedDraftStateContent(state: PersistedComposerDraftStoreState): boolean {
+  return (
+    Object.keys(state.draftsByThreadId).length > 0 ||
+    Object.keys(state.draftThreadsByThreadId).length > 0 ||
+    Object.keys(state.projectDraftThreadIdByProjectId).length > 0
+  );
+}
+
+function hasPersistedDraftStateContentRaw(raw: string | null): boolean {
+  return hasPersistedDraftStateContent(parsePersistedDraftStateRaw(raw));
+}
+
+let shouldRemoveLegacyComposerDraftStorageKey = false;
+
+const composerDraftStateStorage: StateStorage = {
+  getItem: (name) => {
+    const storage = getComposerDraftStorageBackend();
+    if (!storage) {
+      return null;
+    }
+    const currentRaw = storage.getItem(name);
+    if (name !== COMPOSER_DRAFT_STORAGE_KEY) {
+      return currentRaw;
+    }
+    const legacyRaw = storage.getItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY);
+    if (hasPersistedDraftStateContentRaw(currentRaw) || !hasPersistedDraftStateContentRaw(legacyRaw)) {
+      return currentRaw;
+    }
+    shouldRemoveLegacyComposerDraftStorageKey = true;
+    return legacyRaw;
+  },
+  setItem: (name, value) => {
+    const storage = getComposerDraftStorageBackend();
+    if (!storage) {
+      return;
+    }
+    storage.setItem(name, value);
+    if (
+      name === COMPOSER_DRAFT_STORAGE_KEY &&
+      (shouldRemoveLegacyComposerDraftStorageKey || hasPersistedDraftStateContentRaw(value))
+    ) {
+      storage.removeItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY);
+      shouldRemoveLegacyComposerDraftStorageKey = false;
+    }
+  },
+  removeItem: (name) => {
+    const storage = getComposerDraftStorageBackend();
+    if (!storage) {
+      return;
+    }
+    storage.removeItem(name);
+    if (name === COMPOSER_DRAFT_STORAGE_KEY) {
+      storage.removeItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY);
+      shouldRemoveLegacyComposerDraftStorageKey = false;
+    }
+  },
+};
 
 export const useComposerDraftStore = create<ComposerDraftStoreState>()(
   persist(
@@ -1169,7 +1256,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
     {
       name: COMPOSER_DRAFT_STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => composerDraftStateStorage),
       partialize: (state) => {
         const persistedDraftsByThreadId: PersistedComposerDraftStoreState["draftsByThreadId"] = {};
         for (const [threadId, draft] of Object.entries(state.draftsByThreadId)) {

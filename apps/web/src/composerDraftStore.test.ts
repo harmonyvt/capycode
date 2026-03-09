@@ -3,6 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type ComposerImageAttachment, useComposerDraftStore } from "./composerDraftStore";
 
+const LEGACY_COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+const COMPOSER_DRAFT_STORAGE_KEY = "capycode:composer-drafts:v1";
+
+function createMemoryStorage() {
+  const entries = new Map<string, string>();
+  return {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      entries.set(key, value);
+    },
+    removeItem: (key: string) => {
+      entries.delete(key);
+    },
+    clear: () => {
+      entries.clear();
+    },
+  };
+}
+
 function makeImage(input: {
   id: string;
   previewUrl: string;
@@ -449,5 +468,116 @@ describe("composerDraftStore runtime and interaction settings", () => {
     store.setInteractionMode(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
+
+describe("composerDraftStore legacy persistence migration", () => {
+  const threadId = ThreadId.makeUnsafe("thread-legacy");
+  const projectId = ProjectId.makeUnsafe("project-legacy");
+  const originalLocalStorage = globalThis.localStorage;
+  let memoryStorage: ReturnType<typeof createMemoryStorage>;
+
+  beforeEach(() => {
+    memoryStorage = createMemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: memoryStorage,
+    });
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: originalLocalStorage,
+    });
+  });
+
+  it("hydrates drafts from the legacy storage key without deleting the only stored copy", async () => {
+    memoryStorage.setItem(
+      COMPOSER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          draftsByThreadId: {},
+          draftThreadsByThreadId: {},
+          projectDraftThreadIdByProjectId: {},
+        },
+        version: 1,
+      }),
+    );
+    memoryStorage.setItem(
+      LEGACY_COMPOSER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          draftsByThreadId: {
+            [threadId]: {
+              prompt: "legacy prompt",
+              attachments: [
+                {
+                  id: "attachment-1",
+                  name: "legacy.png",
+                  mimeType: "image/png",
+                  sizeBytes: 4,
+                  dataUrl: "data:image/png;base64,AQIDBA==",
+                },
+              ],
+            },
+          },
+          draftThreadsByThreadId: {
+            [threadId]: {
+              projectId,
+              createdAt: "2026-03-09T00:00:00.000Z",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              envMode: "local",
+            },
+          },
+          projectDraftThreadIdByProjectId: {
+            [projectId]: threadId,
+          },
+        },
+        version: 1,
+      }),
+    );
+
+    await useComposerDraftStore.persist.rehydrate();
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe("legacy prompt");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.images).toHaveLength(1);
+    expect(memoryStorage.getItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY)).not.toBeNull();
+    expect(memoryStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY)).toContain(
+      '"draftsByThreadId":{}',
+    );
+  });
+
+  it("removes the legacy key after the migrated state is persisted under the new key", async () => {
+    memoryStorage.setItem(
+      LEGACY_COMPOSER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          draftsByThreadId: {
+            [threadId]: {
+              prompt: "legacy prompt",
+              attachments: [],
+            },
+          },
+          draftThreadsByThreadId: {},
+          projectDraftThreadIdByProjectId: {},
+        },
+        version: 1,
+      }),
+    );
+
+    await useComposerDraftStore.persist.rehydrate();
+    useComposerDraftStore.getState().setPrompt(threadId, "migrated prompt");
+
+    expect(memoryStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY)).toContain("migrated prompt");
+    expect(memoryStorage.getItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY)).toBeNull();
   });
 });

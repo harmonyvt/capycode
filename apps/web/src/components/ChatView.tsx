@@ -247,8 +247,10 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-const LAST_EDITOR_KEY = "t3code:last-editor";
-const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+const LAST_EDITOR_KEY = "capycode:last-editor";
+const LEGACY_LAST_EDITOR_KEY = "t3code:last-editor";
+const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "capycode:last-invoked-script-by-project";
+const LEGACY_LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
@@ -264,10 +266,12 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-const WORKTREE_BRANCH_PREFIX = "t3code";
+const WORKTREE_BRANCH_PREFIX = "capycode";
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
-  const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+  const stored =
+    localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY) ??
+    localStorage.getItem(LEGACY_LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
   if (!stored) return {};
 
   try {
@@ -1745,12 +1749,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     try {
       if (Object.keys(lastInvokedScriptByProjectId).length === 0) {
         localStorage.removeItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+        localStorage.removeItem(LEGACY_LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
         return;
       }
       localStorage.setItem(
         LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
         JSON.stringify(lastInvokedScriptByProjectId),
       );
+      localStorage.removeItem(LEGACY_LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
     } catch {
       // Ignore storage write failures (private mode, quota exceeded, etc.)
     }
@@ -5640,7 +5646,7 @@ const OpenInPicker = memo(function OpenInPicker({
   openInCwd: string | null;
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
-    const stored = localStorage.getItem(LAST_EDITOR_KEY);
+    const stored = localStorage.getItem(LAST_EDITOR_KEY) ?? localStorage.getItem(LEGACY_LAST_EDITOR_KEY);
     return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
   });
 
@@ -5691,6 +5697,7 @@ const OpenInPicker = memo(function OpenInPicker({
       if (!editor) return;
       void api.shell.openInEditor(openInCwd, editor);
       localStorage.setItem(LAST_EDITOR_KEY, editor);
+      localStorage.removeItem(LEGACY_LAST_EDITOR_KEY);
       setLastEditor(editor);
     },
     [effectiveEditor, openInCwd, setLastEditor],
